@@ -1,4 +1,4 @@
-# 🛡️ ROKH WAF (دیواره آتش رُخ)
+# 🛡️ ROKH WAF
 
 <div align="center">
 
@@ -10,257 +10,267 @@
 [![Latency P99](https://img.shields.io/badge/P99%20Latency-0.12%20ms-success.svg?style=flat-square)](#-empirical-benchmarks)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 
-**سامانه جامع دیواره آتش لایه ۷، پروکسی معکوس بلادرنگ و مرکز عملیات امنیت (SOC)**  
-*High-Performance Hybrid Web Application Firewall, Reverse Proxy & Security Operations Center*
+**Next-Generation Layer-7 Hybrid Web Application Firewall, Reverse Proxy & Real-Time SOC**  
+*Ultra-low latency edge defense combining Rust's memory safety with Python's AI telemetry.*
 
-**طراح و توسعه‌دهنده اصلی: طاها وزیری (Taha Vaziri)**
+**Author & System Architect: Taha Vaziri**
 
-[ویژگی‌های کلیدی](#-key-capabilities) •
-[معماری سیستم](#-system-architecture) •
-[درخت ساختار پروژه](#-repository-structure) •
-[نتایج بنچمارک](#-empirical-benchmarks) •
-[راهنمای راه‌اندازی](#-quick-start-guide) •
-[آزمون‌های امنیتی](#-automated-security-verification)
+[Key Capabilities](#-key-capabilities) •
+[System Architecture](#-system-architecture) •
+[Repository Layout](#-repository-layout) •
+[Empirical Benchmarks](#-empirical-benchmarks) •
+[Quick Start Guide](#-quick-start-guide) •
+[Automated Security Verification](#-automated-security-verification)
 
 </div>
 
 ---
 
-## 📖 معرفی پروژه (Overview)
+## 📖 Executive Summary
 
-سامانه **ROKH WAF (دیواره آتش رُخ)** یک دیواره آتش نرم‌افزاری هیبریدی در تراز صنعتی است که با تلفیق توان پردازشی و ایمنی حافظه زبان **Rust (موتور هسته و پروکسی غیرهمگام)** و انعطاف‌پذیری تحلیلی **Python (مرکز مانیتورینگ SOC و هوش مصنوعی تشخیص تهدیدات)** طراحی شده است.
+**ROKH WAF** is an enterprise-grade, memory-safe, ultra-low latency Layer-7 Web Application Firewall (WAF) and reverse proxy designed for modern infrastructure. It pairs the bare-metal speed and concurrency of a **Rust Tokio / Axum asynchronous core engine** with an **intelligent Python security telemetry center and Shannon Entropy anomaly detector**.
 
-این سامانه به صورت یک **پروکسی معکوس با دسترسی لبه (Anycast Reverse Proxy)** در ورودی شبکه مستقر شده، درخواست‌های ورودی پروتکل HTTP/HTTPS را با کمترین تاخیر پردازشی ممکن بازرسی کرده، و ترافیک مخرب (حملات OWASP Top 10، ربات‌های مهاجم، دیداس‌های حجمی و بارهای مشکوک صفر-روزه) را پیش از رسیدن به سرور مبدا خنثی می‌کند.
+Positioned directly at the network ingress as an Anycast-ready reverse proxy, ROKH WAF intercepts inbound HTTP/HTTPS traffic, performs multi-stage deobfuscation and linear-time DFA inspection, and neutralizes OWASP Top 10 exploits, volumetric DDoS floods, credential stuffing bots, and zero-day anomalies before they can reach your backend applications.
 
 ---
 
-## ⚡ ویژگی‌های شاخص فنی (Key Capabilities)
+## ⚡ Key Capabilities
 
-### ۱. موتور پروکسی فوق سریع Rust با بافر Zero-Copy
-- پیاده‌سازی‌شده بر پایه **Tokio** و **Axum** جهت تضمین همزمانی بیش از ۱۰۰٬۰۰۰ سوکت فعال بدون مسدودسازی نخ‌های پردازنده.
-- خاتمه پروتکل رمزنگاری TLS 1.3 با پروتکل 0-RTT و انتقال مستقیم بافر حافظه بدون بار مضاعف روی سخت‌افزار.
+### 1. Ultra-Fast Zero-Copy Reverse Proxy Engine
+- Built on top of **Tokio** and **Axum**, engineered to sustain 100,000+ concurrent connections per node without worker thread blocking.
+- Microsecond-level packet turnaround: median P50 processing latency of **0.04 ms** and P99 latency of **0.12 ms**.
+- Supports standard TLS termination, transparent keep-alive pipelining, and upstream connection pooling.
 
-### ۲. خط لوله بازگشتی رمزگشایی در ۵ لایه (5-Stage Deobfuscation Pipeline)
-پیش از اعمال قوانین، کلیه رشته‌های ورودی نرمال‌سازی می‌شوند تا تکنیک‌های دور زدن (Evasion) بی‌اثر شوند:
-- **Pass 1 (URL Decoding):** شکستن انکودینگ‌های تو در تو (Nested `%252e%252e%2f` $\rightarrow$ `../`).
-- **Pass 2 (HTML5 Entities):** تبدیل انتیتی‌های یونیکد و وب (`&colon;&quot;` $\rightarrow$ `:"`).
-- **Pass 3 (Full-Width Unicode Normalization):** تبدیل کاراکترهای تمام‌عرض NFKC به اسکی استاندارد (`＜script＞` $\rightarrow$ `<script>`).
-- **Pass 4 (Null-Byte Stripping):** حذف بایت‌های نال (`%00`) جهت جلوگیری از آسیب‌پذیری‌های مسمومیت رشته.
-- **Pass 5 (SQL/Shell Comment Neutralization):** پالایش کامنت‌های تزریق‌شده درون واژگان کلیدی (`UN/**/ION` $\rightarrow$ `UNION`).
+### 2. Automated Web Server & Service Auto-Discovery
+- Built-in host scanner detects active web servers (**Nginx, Apache, Microsoft IIS, Node.js/Next.js, Python/FastAPI/Django, Caddy, Docker**) running across local and private ports.
+- Interactive multi-service protection menu enables instant single-service routing or full-gateway coverage (`[A]` for ALL virtual hosts).
 
-### ۳. موتور تطبیق اتوماتای قطعی DFA با مصونیت ۱۰۰٪ در برابر ReDoS
-- قوانین بازرسی با استفاده از اتوماتای متناهی قطعی (Deterministic Finite Automata) کامپایل می‌شوند.
-- زمان تطبیق پکت‌ها دارای تضمین ریاضی **$O(N)$ خطی** است که امکان هرگونه حمله اختلال سرویس از طریق عبارات باقاعده (ReDoS) را از بین می‌برد.
+### 3. 5-Stage Recursive Deobfuscation Pipeline (Anti-Evasion)
+Input strings undergo comprehensive normalization before rules evaluation to neutralize bypass attempts:
+- **Pass 1 (Nested URL Decoding):** Resolves double/triple encoding schemes (`%252e%252e%2f` $\rightarrow$ `../`).
+- **Pass 2 (HTML5 Entity Resolution):** Translates web and character entities (`&colon;&quot;` $\rightarrow$ `:"`).
+- **Pass 3 (Unicode NFKC Normalization):** Converts full-width and typographic variations into canonical ASCII (`＜script＞` $\rightarrow$ `<script>`).
+- **Pass 4 (Null-Byte Stripping):** Removes null bytes (`%00`) to thwart string-truncation exploits.
+- **Pass 5 (SQL / Shell Comment Neutralization):** Strips inline token-breaker comments (`UN/**/ION` $\rightarrow$ `UNION`).
 
-### ۴. ماژول هوش مصنوعی و انتروپی ریاضی شنون (Shannon Entropy AI Brain)
-برای مقابله با پی‌لودهای ناشناخته، مبهم‌سازی‌شده یا بدافزارهای صفر-روزه (Zero-Day):
+### 4. Deterministic Finite Automata (DFA) Inspection Core
+- Rule patterns are compiled into deterministic state machines with guaranteed **$O(N)$ linear time complexity** relative to payload size.
+- Provides **100% mathematical immunity against Regular Expression Denial of Service (ReDoS)** attacks.
+- Covers SQLi, XSS, Path Traversal (LFI/RFI), Remote Code Execution (RCE), SSRF, Server-Side Template Injection (SSTI), and Automated Scanners.
+
+### 5. Shannon Entropy AI Anomaly Brain
+For catching obfuscated zero-day exploits and high-entropy shellcode that evade signature matching:
 $$\mathcal{H}(X) = -\sum_{i=1}^{n} P(x_i) \log_2 P(x_i)$$
-- پی‌لودهایی با انتروپی بالاتر از آستانه ($H > 4.65$) به همراه بردارسازی سریع n-gram/TF-IDF شناسایی و به عنوان رفتار نامتعارف علامت‌گذاری می‌شوند.
+- High-entropy request payloads ($H > 4.65$) paired with n-gram character frequency modeling flag suspicious payloads for deep inspection.
 
-### ۵. سد دفاعی چندمرحله‌ای ضد دیداس (Multi-Tier Anti-DDoS & Client PoW)
-- **ردیف ۱:** کنترل نرخ جریان بر اساس الگوریتم Token Bucket و پنجره لغزان IP.
-- **ردیف ۲:** زندان خودکار آی‌پی (Auto IP-Jail) در صورت تکرار تخلف.
-- **ردیف ۳:** چالش رمزنگاری سمت کاربر مبتنی بر **اثبات کار (SHA-256 Proof-of-Work)**، مشابه مکانیزم امنیتی Cloudflare Under Attack Mode برای تفکیک بلادرنگ کاربران واقعی از ربات‌ها و ابزارهای حمله DoS بدون نیاز به کپچای آزاردهنده.
+### 6. Multi-Tier Anti-DDoS & Client-Side Proof-of-Work (PoW)
+- **Tier 1:** Token-bucket rate limiter with sliding per-IP request windows.
+- **Tier 2:** Automatic IP jailing with exponential backoff on repeated violations.
+- **Tier 3 (Under Attack Defense):** Transparent client-side **SHA-256 Proof-of-Work challenge**, filtering out distributed botnets without disrupting legitimate users with intrusive visual CAPTCHAs.
 
-### ۶. مرکز عملیات امنیت و داشبورد SOC (Real-Time SOC Center)
-- داشبورد تعاملی مبتنی بر FastAPI با ثبت رویدادها در پایگاه SQLite با حالت WAL بدون مسدودسازی دیسک.
-- ابزار تست نفوذ تک‌کلیکی (Attack Simulator) برای ارائه و دمو به کارشناسان و داوران.
+### 7. Real-Time SOC Center & Live Telemetry
+- Async telemetry logger writes incident metadata to an ultra-fast **SQLite database in WAL (Write-Ahead Logging) mode** with zero proxy stalls.
+- Interactive **FastAPI SOC Dashboard** provides real-time event streaming, threat distribution analytics, system status, and an embedded attack simulator.
+
+### 8. Cybernetic Forensics Block Pages & Content Negotiation
+- **Browser Clients:** Renders a high-tech, responsive dark-mode cyber block page with forensic details, incident category, and a one-click copyable Ray ID.
+- **API Clients / cURL:** Automatically returns clean, machine-parsable JSON payloads (`{"status": "BLOCKED", "incident_id": "SEC-...", "attack_type": "SQL_INJECTION"}`).
 
 ---
 
-## 🏛️ معماری کلان سیستم (System Architecture)
+## 🏛️ System Architecture
 
 ```mermaid
 flowchart TD
-    Client["کلاینت / کاربر / ربات مهاجم"] -->|HTTP Traffic :8080| Ingress["مدیریت ورودی لایه شبکه (Ingress)"]
+    Client["Client / User / Attacker"] -->|HTTP/S Ingress :8080| Ingress["Network Ingress & Socket Handler"]
     
-    subgraph RustCore["موتور هسته دیواره آتش رُخ (Rust Tokio Core Engine)"]
+    subgraph RustCore["ROKH WAF Core Engine (Rust Tokio / Axum)"]
         direction TB
-        Ingress --> DDoS["۱. کنترل نرخ و چالش ضد دیداس (PoW Challenge)"]
-        DDoS --> Bot["۲. انگشت‌نگاری ابزارهای پویشگر (Scanner Detection)"]
-        Bot --> Deob["۳. خط لوله رمزگشایی ۵ مرحله‌ای (Anti-Evasion Normalizer)"]
-        Deob --> DFA["۴. موتور بازرسی عمیق اتوماتا (DFA Regex O(N))"]
-        DFA --> Entropy["۵. ارزیابی انتروپی ریاضی شنون (Shannon Anomaly AI)"]
+        Ingress --> DDoS["1. Rate Limiting & Multi-Tier Anti-DDoS (PoW)"]
+        DDoS --> Bot["2. Automated Scanner & Bot Fingerprinting"]
+        Bot --> Deob["3. 5-Stage Anti-Evasion Deobfuscator"]
+        Deob --> DFA["4. Deep Packet Inspection (DFA Linear O(N))"]
+        DFA --> Entropy["5. Shannon Entropy Anomaly Classifier"]
     end
 
-    RustCore -->|شناسایی تهدید: مسدودسازی 403 Forbidden| Drop["پاسخ امنیتی + شناسه پیگیری رخداد"]
-    RustCore -->|ثبت وقایع به صورت ناهمگام (Async WAL)| DB[("پایگاه داده رخدادها\n(SQLite WAL)")]
-    RustCore -->|درخواست سالم و مجاز| Backend["سرویس برنامه کاربردی مبدا (:9000)"]
+    RustCore -->|Threat Detected: HTTP 403 / 429| Drop["Block Page + Ray ID / JSON Telemetry"]
+    RustCore -->|Non-blocking Async WAL Logging| DB[("Security Events DB\n(SQLite WAL)")]
+    RustCore -->|Clean Traffic: Reverse Proxy Forward| Backend["Protected Backend Service (:9000 / :80 / :3000)"]
     
-    DB <--> SOC["داشبورد مرکز عملیات امنیت (FastAPI SOC :9000)\nجریان بلادرنگ رخدادها • مدیریت تنظیمات • شبیه‌ساز حمله"]
-    SOC --> Showcase["موشن گرافیک سینمایی معرفی به داوران (:9000/motion)"]
+    DB <--> SOC["Security Operations Center (FastAPI SOC :9000)\nLive Event Stream • Telemetry Analytics • Attack Simulator"]
 ```
 
 ---
 
-## 📂 ساختار فایل‌ها و شاخه‌ها (Repository Structure)
+## 📂 Repository Layout
 
 ```text
 rokh-waf/
-├── Cargo.toml                       # مشخصات پکیج و تنظیمات کامپایلر Rust (Author: Taha Vaziri)
-├── Cargo.lock                       # قفل وابستگی‌های کامپایلر Rust
-├── LICENSE                          # مجوز متنباز استاندارد MIT (حق نشر طاها وزیری)
-├── README.md                        # مستندات جامع فنی و راهنمای پروژه
-├── requirements.txt                 # پیش‌نیازهای پایتون (FastAPI, Uvicorn, Requests)
-├── install.ps1                      # اسکریپت نصب آسان و خودکار برای ویندوز
-├── install.sh                       # اسکریپت نصب آسان برای لینوکس و مک
-├── start_waf.ps1                    # راه‌انداز تعاملی فایروال برای ویندوز
-├── start_waf.py                     # ویزارد هوشمند راه‌اندازی و تعیین سرور تحت حفاظت
-├── .gitignore                       # قوانین نادیده‌گیری گیت (پایگاه‌داده، کش‌ها، موشن‌گرافیک محلی)
+├── Cargo.toml                       # Rust package manifest, dependencies & release profile
+├── Cargo.lock                       # Locked compiler dependency graph
+├── LICENSE                          # MIT Open Source License
+├── README.md                        # Enterprise documentation and system guide
+├── requirements.txt                 # Python runtime requirements (FastAPI, Uvicorn, Requests)
+├── install.ps1                      # Automated one-click installer for Windows
+├── install.sh                       # Automated one-click installer for Linux & macOS
+├── start_waf.ps1                    # Interactive Windows launcher shortcut
+├── start_waf.py                     # Smart multi-service launcher & configuration wizard
+├── .gitignore                       # Git exclusion rules (build artifacts, databases, local caches)
 │
-├── .github/                         # یکپارچه‌سازی و استقرار پیوسته (CI/CD)
+├── .github/                         # Continuous Integration & Delivery
 │   └── workflows/
-│       └── ci.yml                   # خط لوله تست خودکار GitHub Actions (Cargo Check + Python Tests)
+│       └── ci.yml                   # GitHub Actions pipeline (Cargo Check, Lints & Python Tests)
 │
-├── src/                             # هسته اصلی دیواره آتش و پروکسی لایه ۷ (Rust)
-│   ├── main.rs                      # نقطه ورود و راه‌اندازی سرورهای Axum/Tokio
-│   ├── proxy.rs                     # پروکسی معکوس غیرهمگام با انتقال بدون کپی (Zero-Copy)
-│   ├── rules.rs                     # پایگاه قوانین بازرسی پکت و موتور اتوماتای قطعی (OWASP CRS)
-│   ├── deobfuscator.rs              # خط لوله نرمال‌سازی و شکستن ترفندهای Evasion در ۵ لایه
-│   ├── antiddos.rs                  # سد ضد دیداس چندمرحله‌ای و چالش رمزنگاری SHA-256 PoW
-│   ├── ratelimit.rs                 # پیاده‌سازی سطل توکن و پنجره زمانی لغزان
-│   ├── logger.rs                    # سیستم لاگ‌گیری غیرهمگام رویدادها در SQLite WAL
-│   └── config.rs                    # مدیریت تنظیمات داینامیک و متغیرهای عملیاتی
+├── src/                             # Core WAF Engine (High-Performance Rust)
+│   ├── main.rs                      # Application entrypoint & Tokio async runtime initialization
+│   ├── proxy.rs                     # Zero-copy async reverse proxy & upstream request forwarding
+│   ├── rules.rs                     # DFA inspection engine & OWASP Core Rule Set signatures
+│   ├── deobfuscator.rs              # 5-stage anti-evasion string normalization pipeline
+│   ├── antiddos.rs                  # Multi-tier Anti-DDoS & cryptographic SHA-256 PoW challenge
+│   ├── ratelimit.rs                 # Token-bucket rate limiter with sliding IP tracking
+│   ├── logger.rs                    # Non-blocking SQLite WAL security incident logger
+│   ├── pages.rs                     # High-tech cyber block pages & JSON content negotiation
+│   └── config.rs                    # Dynamic configuration loader (CLI flags + environment variables)
 │
-├── ai_engine/                       # موتور هوش مصنوعی و تحلیل انتروپی تهدیدات (Python)
+├── ai_engine/                       # AI Anomaly & Threat Detection (Python)
 │   ├── __init__.py
-│   ├── model.py                     # مدل طبقه‌بندی ترکیبی هیوریستیک + انتروپی شنون
-│   ├── dataset.py                   # استخراج ویژگی‌ها و ساختارهای داده پی‌لودها
-│   ├── train.py                     # خط لوله آموزش مدل
-│   └── waf_brain_weights.json       # وزن‌ها و لغت‌نامه از پیش کامپایل‌شده (سبک و سریع)
+│   ├── model.py                     # Hybrid heuristic & Shannon Entropy classifier
+│   ├── dataset.py                   # Feature extraction, n-gram vectorizer & dataset utilities
+│   ├── train.py                     # Model training & weight generation pipeline
+│   └── waf_brain_weights.json       # Precompiled weights and statistical thresholds
 │
-├── python_soc/                      # مرکز عملیات امنیت و سرور تجمیع داده‌ها (FastAPI)
+├── python_soc/                      # Security Operations Center (FastAPI)
 │   ├── __init__.py
-│   └── app.py                       # داشبورد مانیتورینگ بلادرنگ، APIهای مدیریتی و سرویس مبدا فرضی
+│   └── app.py                       # Telemetry dashboard, real-time metrics & mock upstream backend
 │
-├── showcase/                        # پرزنتیشن تعاملی و موشن‌گرافیک داوران (ارائه محلی / مستثنی از گیت)
-│   ├── index.html                   # موشن‌گرافیک ۷ اسلایدی ۲۸ ثانیه‌ای با معرفی طاها وزیری
-│   └── media/                       # فایل‌های رسانه‌ای رندرشده محلی
+├── scripts/                         # Operational & Development Utilities
+│   ├── discover_services.py         # Multi-threaded web server & service auto-discovery engine
+│   ├── run_all.ps1                  # Single-command launcher for proxy and SOC dashboard
+│   ├── train_enterprise.py          # Enterprise training pipeline on large exploit corpora
+│   └── train_mega.py                # Heavyweight deep-learning weight regeneration script
 │
-├── tests/                           # مجموعه آزمون‌های امنیتی و تست نفوذ خودکار
-│   ├── test_attacks.py              # ارزیابی ۱۱ سناریوی استاندارد نفوذ OWASP Top 10
-│   ├── test_ddos_flood.py           # آزمون طغیان چندنخی و حل خودکار چالش PoW
-│   ├── test_sqli_fix.py             # آزمون عبور از فیلترهای پیشرفته تزریق اس‌کیو‌ال
-│   ├── test_rce_fix.py              # آزمون عبور از فیلترهای اجرای کد دستوری
-│   └── test_ai_engine.py            # اعتبارسنجی دقت و تاخیر موتور انتروپی هوش مصنوعی
+├── tests/                           # Automated Security & Pen-Testing Suite
+│   ├── test_attacks.py              # 11 standard OWASP Top 10 attack scenario validations
+│   ├── test_ddos_flood.py           # Multi-threaded volumetric flood & PoW solver test
+│   ├── test_sqli_fix.py             # Advanced SQL injection evasion tests
+│   ├── test_rce_fix.py              # Advanced command injection evasion tests
+│   └── test_ai_engine.py            # Accuracy & latency validation for Shannon Entropy brain
 │
-├── benchmarks/                      # ابزارهای ارزیابی عملکرد و مگا بنچمارک در مقیاس صنعتی
-│   ├── mega_attack_benchmark.py     # تست در برابر ۷۹۶ سناریوی واقعی برگرفته از SecLists
-│   ├── heavy_attack_benchmark.py    # بنچمارک نرخ تاخیر P50 / P99 در همزمانی بالا
-│   └── stress_sec_audit.py          # آزمون استرس و پایداری در بار پردازشی شدید
+├── benchmarks/                      # Industrial-Grade Benchmark Suite
+│   ├── mega_attack_benchmark.py     # 796 real-world exploit scenarios sourced from SecLists
+│   ├── heavy_attack_benchmark.py    # High-concurrency P50/P99 latency profiler
+│   └── stress_sec_audit.py          # Extreme load stability & memory leak stress test
 │
-├── data/                            # امضاهای پایگاه داده و بردارها
-│   └── signatures/                  # واژه‌نامه‌های حملات (SQLi, XSS, RCE, LFI, Scanners)
-│
-└── scripts/                         # اسکریپت‌های راه‌اندازی و مدیریت محیط توسعه
-    ├── run_all.ps1                  # اسکریپت تک‌کلیکی راه‌اندازی همزمان پروکسی Rust و داشبورد Python
-    ├── train_enterprise.py          # اسکریپت آموزش مدل بر روی کورپوس سازمانی
-    └── train_mega.py                # اسکریپت بازتولید وزن‌های یادگیری عمیق
+└── data/                            # Attack Signatures & Corpora
+    └── signatures/                  # Signature dictionaries (SQLi, XSS, RCE, LFI, Scanners)
 ```
 
 ---
 
-## 📊 نتایج ارزیابی آزمایشگاهی (Empirical Benchmarks)
+## 📊 Empirical Benchmarks
 
-در آزمون جامع ارزیابی امنیتی در برابر **۷۹۶ سناریوی تهاجمی و درخواست تمیز** از مراجع استاندارد جهانی (*SecLists* و *PayloadsAllTheThings*) نتایج زیر به ثبت رسیده است:
+In an empirical benchmark against **796 real-world attack vectors and benign payloads** compiled from globally recognized security corpora (*SecLists* and *PayloadsAllTheThings*), ROKH WAF achieved the following performance metrics:
 
-| شاخص سنجش عملکرد (Metric) | مقدار اندازه‌گیری‌شده در ROKH WAF | حد استاندارد صنعت امنیت | وضعیت ارزیابی |
+| Metric | Measured on ROKH WAF | Industry Standard Target | Status |
 | :--- | :---: | :---: | :---: |
-| **تاخیر صدک P99 بازرسی بسته** | **$0.12\text{ ms}$** | $< 1.0\text{ ms}$ | ✅ فوق‌العاده سریع |
-| **تاخیر میانه P50 بازرسی** | **$0.04\text{ ms}$** | $< 0.5\text{ ms}$ | ✅ بدون تاثیر بر سئو |
-| **نرخ کشف و مهار حملات نفوذ** | **$93.9\%$** ($458$ از $488$) | $> 90.0\%$ | ✅ مهار حداکثری |
-| **نرخ خطای کاذب (False Positive)** | **$0.00\%$** ($0$ خطا در $308$ تست) | $< 0.1\%$ | ✅ صفر درخواست مسدود |
-| **مصرف حافظه رم دائم (RSS)** | **$18.4\text{ MB}$** | $< 100\text{ MB}$ | ✅ فوق‌العاده بهینه |
-| **مصونیت در برابر حمله ReDoS** | **$100\%$** (تضمین الگوریتم DFA) | الزامی | ✅ مصونیت قطعی |
+| **P99 Inspection Latency** | **$0.12\text{ ms}$** | $< 1.0\text{ ms}$ | ✅ Ultra-Low Overhead |
+| **P50 Median Latency** | **$0.04\text{ ms}$** | $< 0.5\text{ ms}$ | ✅ Zero SEO / UX Impact |
+| **Threat Interception Rate** | **$93.9\%$** ($458$ / $488$ vectors) | $> 90.0\%$ | ✅ High-Efficacy Defense |
+| **False Positive Rate** | **$0.00\%$** ($0$ / $308$ clean requests) | $< 0.1\%$ | ✅ Zero Legitimate Traffic Disrupted |
+| **Memory Footprint (RSS)** | **$18.4\text{ MB}$** | $< 100\text{ MB}$ | ✅ Highly Resource-Efficient |
+| **ReDoS Vulnerability** | **$0\%$** (Guaranteed by DFA) | Mandatory | ✅ Deterministic Linear Safety |
 
 ---
 
-## 🚀 راهنمای نصب و راه‌اندازی آسان (Installation & Quick Start)
+## 🚀 Quick Start Guide
 
-### ۱. نصب آسان و خودکار (One-Click Installation)
+### 1. Automated Installation
 
-#### در محیط ویندوز (PowerShell):
+#### On Windows (PowerShell):
 ```powershell
 .\install.ps1
 ```
 
-#### در محیط لینوکس و مک (Linux / macOS):
+#### On Linux & macOS:
 ```bash
 chmod +x install.sh && ./install.sh
 ```
-*این اسکریپت به صورت خودکار پیش‌نیازهای پایتون، پکیج‌های مورد نیاز و هسته Rust WAF را کامپایل و آماده اجرا می‌کند.*
+
+*The installer auto-detects system architecture, validates Python 3.10+ and Rust toolchains, installs required dependencies, runs a local web service diagnostic, and compiles the optimized Rust release binary.*
 
 ---
 
-### ۲. راه‌اندازی هوشمند و تعیین سرویس تحت حفاظت (Smart Target Launcher)
+### 2. Smart Interactive Launcher & Target Configurator
 
-برای اجرای فایروال و تعیین اینکه مایلید از چه سرور، پورت یا آدرسی محافظت کنید، اسکریپت راه‌انداز هوشمند را اجرا نمایید:
+Launch the interactive wizard to automatically scan local ports, discover running web servers (Nginx, Apache, IIS, Node, Python), and select the target to protect:
 
 ```powershell
-# اجرای ویزارد تعاملی (پرسش آدرس مقصد، پورت، حالت امنیتی و نرخ دیداس)
+# Interactive startup wizard
 .\start_waf.ps1
 
-# یا با پایتون:
+# Or with Python directly:
 python start_waf.py
 ```
 
-همچنین می‌توانید مستقیماً آدرس سرور مقصد خود را به عنوان آرگومان خط فرمان پاس دهید:
+#### Command-Line Flags:
+You can also launch ROKH WAF directly with custom target configurations:
 
 ```bash
-# محافظت از یک برنامه React / Node.js روی پورت ۳۰۰۰ با شنود فایروال روی ۸۰۸۰
+# Protect a Node.js / React application running on port 3000 via WAF proxy on 8080:
 python start_waf.py --target http://127.0.0.1:3000 --port 8080
 
-# محافظت از یک وب‌سرور جنگو یا فست‌اِی‌پی‌آی روی پورت ۸۰۰۰
+# Protect a Django or FastAPI service with 120 req/min rate limit:
 python start_waf.py --target http://localhost:8000 --mode PREVENTION --rpm 120
 ```
 
-#### گزینه‌های خط فرمان:
-- `--target, -t <URL>`: آدرس سرویس یا وب‌سایتی که باید از آن دفاع شود.
-- `--port, -p <PORT>`: پورت شنود پروکسی فایروال (پیش‌فرض: `8080`).
-- `--mode, -m <MODE>`: حالت دفاعی (`PREVENTION` برای مسدودسازی یا `DETECTION` برای مانیتورینگ).
-- `--rpm <COUNT>`: سقف مجاز درخواست در دقیقه برای هر آی‌پی (پیش‌فرض: `60`).
-- `--no-soc`: عدم راه‌اندازی همزمان داشبورد پایتون SOC.
+| Flag | Argument | Description | Default |
+| :--- | :--- | :--- | :--- |
+| `--target, -t` | `<URL>` | Upstream backend URL or IP address to protect | `http://127.0.0.1:9000` |
+| `--port, -p` | `<PORT>` | Public network listening port for the WAF proxy | `8080` |
+| `--mode, -m` | `<MODE>` | Security mode: `PREVENTION` (block) or `DETECTION` (log only) | `PREVENTION` |
+| `--rpm` | `<COUNT>` | Maximum allowed requests per minute per IP | `60` |
+| `--no-soc` | *flag* | Disable launching the Python SOC Dashboard | *False* |
 
 ---
 
-### ۳. راه‌اندازی دستی (مستقل)
+### 3. Standalone Manual Startup
 
-#### ۱. راه‌اندازی داشبورد SOC (پورت ۹۰۰۰):
+#### Step 1: Start the SOC Dashboard & Telemetry Server (Port 9000)
 ```bash
 python python_soc/app.py
 ```
-- **داشبورد مرکز عملیات امنیت:** [http://127.0.0.1:9000](http://127.0.0.1:9000)
+- **SOC Monitoring Console:** [http://127.0.0.1:9000](http://127.0.0.1:9000)
 
-#### ۲. راه‌اندازی مستقیم باینری کامپایل‌شده Rust:
+#### Step 2: Start the Compiled Rust WAF Core Proxy (Port 8080)
 ```bash
 ./target/release/waf_engine --target http://127.0.0.1:3000 --port 8080
 ```
-- **مدخل ورودی ترافیک تحت حفاظت:** [http://127.0.0.1:8080](http://127.0.0.1:8080)
+- **Protected Public Ingress:** [http://127.0.0.1:8080](http://127.0.0.1:8080)
 
 ---
 
-## 🧪 آزمون‌های امنیتی و صحت‌سنجی (Automated Verification)
+## 🧪 Automated Security Verification
 
-برای اعتبارسنجی کارکرد موتور دفاعی، اسکریپت‌های تست را اجرا نمایید:
+Verify the firewall against simulated attack vectors using the automated test suite:
 
 ```bash
-# آزمون ۱۱ سناریوی نفوذ استاندارد OWASP
+# Run 11 standard OWASP Top 10 attack vectors (SQLi, XSS, RCE, Traversal, etc.)
 python tests/test_attacks.py
 
-# اعتبارسنجی موتور انتروپی شنون و هوش مصنوعی
+# Validate Shannon Entropy anomaly detection accuracy
 python tests/test_ai_engine.py
 
-# شبیه‌سازی حملات دیداس حجمی و چالش SHA-256 PoW
+# Test volumetric flood handling and client PoW solver
 python tests/test_ddos_flood.py
 
-# اجرای مگا بنچمارک ۷۹۶ سناریوی واقعی
+# Run the 796-vector SecLists real-world benchmark
 python benchmarks/mega_attack_benchmark.py
 ```
 
 ---
 
-## 👨‍💻 شناسنامه توسعه‌دهنده (Author & Credits)
+## 👨‍💻 Author & Credits
 
-- **توسعه‌دهنده و معمار سیستم:** **طاها وزیری (Taha Vaziri)**
-- **تمرکز فنی:** سیستم‌های توزیع‌شده با کارایی بالا، سیستم‌های امنیتی لایه ۷ و پردازش بلادرنگ جریان‌های داده در زبان Rust.
-- **لایسنس:** منتشر شده تحت مجوز متنباز [MIT](LICENSE).
+- **Author & System Architect:** **Taha Vaziri**
+- **Specialization:** High-Performance Distributed Systems, Layer-7 Security Architecture, Zero-Copy Async Networking in Rust.
+- **License:** Open-source software released under the [MIT License](LICENSE).

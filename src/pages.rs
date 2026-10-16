@@ -379,7 +379,7 @@ pub fn render_security_block_page(
             </div>
             <div class="edge-status">
                 <span class="pulse-dot"></span>
-                <span>Anycast Edge Core · Rust DFA</span>
+                <span>Anycast Edge Security · Active Defense</span>
             </div>
         </header>
 

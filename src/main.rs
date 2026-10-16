@@ -27,11 +27,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let config = WafConfig::default();
+    let config = WafConfig::from_env_and_args();
     let db_path = config.db_path.clone();
 
     println!("============================================================");
-    println!(" 🛡️  AegisGuard WAF - High-Performance Rust Security Core");
+    println!(" 🛡️  ROKH WAF (دیواره آتش رُخ) - High-Performance Security Core");
     println!("============================================================");
     println!(" [+] Listening Proxy Address : http://{}", config.listen_addr);
     println!(" [+] Target Backend Server   : {}", config.backend_url);

@@ -153,6 +153,12 @@ if ($p9000) {
     Write-Host "  [+] Port 9000 (SOC Center) is FREE and Ready." -ForegroundColor Green
 }
 
+if (Test-Path "scripts\discover_services.py") {
+    Write-Host ""
+    Write-Host "  [*] Auto-detecting running Web Servers & Services on localhost:" -ForegroundColor Cyan
+    & $pythonCmd scripts\discover_services.py
+}
+
 # ------------------------------------------------------------------------------
 # 5. Python Dependencies Auto-Installation
 # ------------------------------------------------------------------------------

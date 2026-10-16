@@ -63,6 +63,12 @@ else
     echo "  [+] Port 9000 (SOC Center) is FREE and Ready."
 fi
 
+if [ -f "scripts/discover_services.py" ]; then
+    echo ""
+    echo "  [*] Auto-detecting running Web Servers & Services on localhost:"
+    $PY_CMD scripts/discover_services.py || true
+fi
+
 # 5. Python Dependencies
 echo ""
 echo "[5/6] Verifying and Installing Python Requirements..."

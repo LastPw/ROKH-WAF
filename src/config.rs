@@ -116,7 +116,7 @@ impl WafConfig {
                 }
                 "--help" | "-h" => {
                     println!("============================================================");
-                    println!(" 🛡️  ROKH WAF (دیواره آتش رُخ) - Options Manual");
+                    println!(" [ROKH WAF] Command-Line Options Manual");
                     println!("============================================================");
                     println!("Usage:");
                     println!("  waf_engine [OPTIONS] [TARGET_URL]");

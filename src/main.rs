@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db_path = config.db_path.clone();
 
     println!("============================================================");
-    println!(" 🛡️  ROKH WAF (دیواره آتش رُخ) - High-Performance Security Core");
+    println!(" [ROKH WAF] High-Performance Layer-7 Defense Engine");
     println!("============================================================");
     println!(" [+] Listening Proxy Address : http://{}", config.listen_addr);
     println!(" [+] Target Backend Server   : {}", config.backend_url);

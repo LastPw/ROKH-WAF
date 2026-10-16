@@ -34,11 +34,17 @@ ai_engine/*.csv
 data_cache/
 *.csv
 
-# Media & Temporary Files
+# Media, Video & Temporary Files
 temp_soundtrack.wav
+waf_commercial_ad.mp4
 *.wav
+*.mp4
 *.tmp
 *.log
+
+# Private Presentation & Motion Graphics (Local only - Excluded from GitHub)
+showcase/
+rokh_motion_cloudflare.html
 
 # Operating System & IDE Caches
 .DS_Store

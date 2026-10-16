@@ -2,6 +2,7 @@ mod antiddos;
 mod config;
 mod deobfuscator;
 mod logger;
+mod pages;
 mod proxy;
 mod ratelimit;
 mod rules;

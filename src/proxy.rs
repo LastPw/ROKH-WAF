@@ -44,6 +44,12 @@ pub async fn proxy_handler(
     let method = parts.method.to_string();
     let path = parts.uri.path().to_string();
     let query_string = parts.uri.query().map(|q| q.to_string());
+    let is_html_client = parts
+        .headers
+        .get("accept")
+        .and_then(|v| v.to_str().ok())
+        .map(|a| a.contains("text/html"))
+        .unwrap_or(false);
 
     // 1.5 DDoS Management Endpoints (Restricted strictly to Internal Localhost SOC Communication)
     if path.starts_with("/__aegis_ddos/") {
@@ -151,7 +157,7 @@ pub async fn proxy_handler(
 
         let retry_str = remaining_secs.to_string();
         let err_json = json!({
-            "waf": "AegisGuard Cloud-Edge WAF",
+            "waf": "ROKH WAF v1.0",
             "status": "BLOCKED",
             "attack_type": "DDOS_FLOOD_JAIL",
             "rule_id": "DDOS-JAIL-001",
@@ -159,6 +165,28 @@ pub async fn proxy_handler(
             "retry_after_seconds": remaining_secs,
             "message": format!("Access Denied: Your IP has been temporarily blacklisted due to high-volume DDoS traffic. Retry after {} seconds.", remaining_secs)
         });
+
+        if is_html_client {
+            let html_body = crate::pages::render_security_block_page(
+                &format!("ROKH-JAIL-{}", client_ip.replace('.', "")),
+                &client_ip,
+                "DDOS_FLOOD_MITIGATION",
+                "DDOS-JAIL-001",
+                "HIGH",
+                &format!("Volumetric Rate Limit Exceeded: Jailed for {}s", remaining_secs),
+                429,
+                &format!("آی‌پی شما به دلیل ارسال بیش از حد و نامتعارف درخواست‌ها به مدت {} ثانیه به صورت موقت در فهرست سیاه قرار گرفته است.", remaining_secs),
+            );
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                [
+                    ("Content-Type", "text/html; charset=utf-8"),
+                    ("Retry-After", retry_str.as_str()),
+                ],
+                html_body,
+            )
+                .into_response();
+        }
 
         return (
             StatusCode::TOO_MANY_REQUESTS,
@@ -197,6 +225,7 @@ pub async fn proxy_handler(
             query_string.as_deref(),
             None,
             bot_result,
+            is_html_client,
         )
         .await;
     }
@@ -239,6 +268,7 @@ pub async fn proxy_handler(
             query_string.as_deref(),
             body_snippet.as_deref(),
             path_result,
+            is_html_client,
         )
         .await;
     }
@@ -256,6 +286,7 @@ pub async fn proxy_handler(
                 query_string.as_deref(),
                 body_snippet.as_deref(),
                 query_result,
+                is_html_client,
             )
             .await;
         }
@@ -274,6 +305,7 @@ pub async fn proxy_handler(
                 query_string.as_deref(),
                 body_snippet.as_deref(),
                 body_result,
+                is_html_client,
             )
             .await;
         }
@@ -294,6 +326,7 @@ pub async fn proxy_handler(
                     query_string.as_deref(),
                     Some(&trigger_desc),
                     header_res,
+                    is_html_client,
                 )
                 .await;
             }
@@ -326,7 +359,7 @@ pub async fn proxy_handler(
 
             let retry_str = remaining_secs.to_string();
             let err_json = json!({
-                "waf": "AegisGuard Cloud-Edge WAF",
+                "waf": "ROKH WAF v1.0",
                 "status": "BLOCKED",
                 "attack_type": "DDOS_FLOOD_JAIL",
                 "rule_id": "DDOS-JAIL-001",
@@ -334,6 +367,28 @@ pub async fn proxy_handler(
                 "retry_after_seconds": remaining_secs,
                 "message": format!("Access Denied: Your IP has been temporarily blacklisted due to high-volume DDoS traffic. Retry after {} seconds.", remaining_secs)
             });
+
+            if is_html_client {
+                let html_body = crate::pages::render_security_block_page(
+                    &format!("ROKH-JAIL-{}", client_ip.replace('.', "")),
+                    &client_ip,
+                    "DDOS_FLOOD_MITIGATION",
+                    "DDOS-JAIL-001",
+                    "HIGH",
+                    &format!("Volumetric Rate Limit Exceeded: Jailed for {}s", remaining_secs),
+                    429,
+                    &format!("آی‌پی شما به دلیل ارسال بیش از حد و نامتعارف درخواست‌ها به مدت {} ثانیه به صورت موقت در فهرست سیاه قرار گرفته است.", remaining_secs),
+                );
+                return (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    [
+                        ("Content-Type", "text/html; charset=utf-8"),
+                        ("Retry-After", retry_str.as_str()),
+                    ],
+                    html_body,
+                )
+                    .into_response();
+            }
 
             return (
                 StatusCode::TOO_MANY_REQUESTS,
@@ -377,6 +432,7 @@ async fn handle_threat_response(
     query_params: Option<&str>,
     body_snippet: Option<&str>,
     detection: DetectionResult,
+    is_html_client: bool,
 ) -> Response {
     let mode_str = state.logger.get_config_mode();
     let current_mode = WafMode::from(mode_str.as_str());
@@ -405,7 +461,7 @@ async fn handle_threat_response(
 
     if current_mode == WafMode::Prevention {
         let err_json = json!({
-            "waf": "AegisGuard WAF v1.0",
+            "waf": "ROKH WAF v1.0",
             "status": "BLOCKED",
             "incident_id": incident_id,
             "attack_type": detection.attack_type.as_str(),
@@ -413,12 +469,37 @@ async fn handle_threat_response(
             "severity": detection.severity,
             "client_ip": client_ip,
             "matched_trigger": detection.matched_pattern,
-            "message": "Access Denied: Malicious request blocked by AegisGuard WAF Security Core."
+            "message": "Access Denied: Malicious request blocked by ROKH WAF Security Core."
         });
+
+        if is_html_client {
+            let html_body = crate::pages::render_security_block_page(
+                &incident_id,
+                client_ip,
+                detection.attack_type.as_str(),
+                detection.rule_id,
+                detection.severity,
+                &detection.matched_pattern,
+                403,
+                "بسته ارسالی با پایگاه امضاها و الگوهای ضد نفوذ OWASP CRS مطابقت داشته و بلافاصله دفع شد.",
+            );
+            return (
+                StatusCode::FORBIDDEN,
+                [
+                    ("Content-Type", "text/html; charset=utf-8"),
+                    ("X-WAF-Incident-ID", incident_id.as_str()),
+                ],
+                html_body,
+            )
+                .into_response();
+        }
 
         return (
             StatusCode::FORBIDDEN,
-            [("Content-Type", "application/json")],
+            [
+                ("Content-Type", "application/json"),
+                ("X-WAF-Incident-ID", incident_id.as_str()),
+            ],
             err_json.to_string(),
         )
             .into_response();
@@ -428,7 +509,7 @@ async fn handle_threat_response(
     (
         StatusCode::OK,
         [("X-WAF-Flagged", "true")],
-        "Request flagged by AegisGuard Monitor Mode",
+        "Request flagged by ROKH WAF Monitor Mode",
     )
         .into_response()
 }

@@ -1,6 +1,5 @@
 # ==============================================================================
-# ROKH WAF (دیواره آتش رُخ) - Windows PowerShell Launcher
-# Author: Taha Vaziri (طاها وزیری)
+# ROKH WAF - Windows PowerShell Launcher
 # ==============================================================================
 
 python start_waf.py $args

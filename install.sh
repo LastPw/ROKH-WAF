@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# ROKH WAF (دیواره آتش رُخ) - Smart Self-Detecting Installer for Linux & macOS
-# Author: Taha Vaziri (طاها وزیری)
+# ROKH WAF - Automated Self-Detecting Installer for Linux & macOS
 # ==============================================================================
 
 set -e
 
 echo ""
 echo "======================================================================"
-echo " 🛡️  ROKH WAF (دیواره آتش رُخ) - Automated Installation & Auto-Detection"
-echo "     System Architect & Developer: Taha Vaziri (طاها وزیری)"
+echo " [ROKH WAF] Automated Installation & Environment Setup"
 echo "======================================================================"
 echo ""
 

@@ -1,14 +1,12 @@
 # ==============================================================================
-# ROKH WAF (دیواره آتش رُخ) - Smart Self-Detecting Installer for Windows
-# Author: Taha Vaziri (طاها وزیری)
+# ROKH WAF - Automated Self-Detecting Installer for Windows
 # ==============================================================================
 
 $ErrorActionPreference = "Continue"
 
 Write-Host ""
 Write-Host "======================================================================" -ForegroundColor Cyan
-Write-Host " [ROKH WAF] Automated Installation and Self-Detection Protocol" -ForegroundColor Cyan
-Write-Host " System Architect and Developer: Taha Vaziri (طاها وزیری)" -ForegroundColor DarkCyan
+Write-Host " [ROKH WAF] Automated Installation and Environment Setup" -ForegroundColor Cyan
 Write-Host "======================================================================" -ForegroundColor Cyan
 
 # ------------------------------------------------------------------------------

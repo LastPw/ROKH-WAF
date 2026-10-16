@@ -1,6 +1,5 @@
 // ==============================================================================
-// ROKH WAF (دیواره آتش رُخ) - High-Tech Cyber Security Error & Block Pages
-// Author: Taha Vaziri (طاها وزیری)
+// ROKH WAF - High-Tech Cyber Security Error & Block Pages
 // ==============================================================================
 
 fn html_escape(s: &str) -> String {

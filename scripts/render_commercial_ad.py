@@ -3,6 +3,7 @@ import sys
 import math
 import wave
 import struct
+import shutil
 import subprocess
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -14,7 +15,14 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-OUTPUT_MP4 = os.path.join(BASE_DIR, "waf_commercial_ad.mp4")
+# Target save destinations:
+# 1. Directly on the User's Windows Desktop
+DESKTOP_DIR = os.path.join(os.environ.get("USERPROFILE", "C:\\Users\\imtah"), "OneDrive", "Desktop")
+if not os.path.exists(DESKTOP_DIR):
+    DESKTOP_DIR = os.path.join(os.environ.get("USERPROFILE", "C:\\Users\\imtah"), "Desktop")
+
+OUTPUT_DESKTOP_MP4 = os.path.join(DESKTOP_DIR, "ROKH_WAF.mp4")
+OUTPUT_PROJECT_MP4 = os.path.join(BASE_DIR, "waf_commercial_ad.mp4")
 TEMP_AUDIO = os.path.join(BASE_DIR, "temp_soundtrack.wav")
 
 WIDTH = 1280
@@ -31,7 +39,6 @@ def generate_soundtrack(filename, duration, sample_rate=44100):
     t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
     audio = np.zeros_like(t)
 
-    # A) Driving 128 BPM Techno/Cyber Kick Drum
     bpm = 128
     beat_interval = 60.0 / bpm
     total_beats = int(duration / beat_interval)
@@ -49,13 +56,11 @@ def generate_soundtrack(filename, duration, sample_rate=44100):
                 kick = np.sin(2 * np.pi * freq * kt) * kick_env * 0.45
                 audio[idx_start:idx_start + kick_samples] += kick
 
-    # B) Dark Cinematic Sub-Bass Drone
     drone_freq = np.where(t < 6.0, 43.6, np.where(t < 13.0, 65.4, 55.0))
     sub_drone = np.sin(2 * np.pi * drone_freq * t) * 0.22
     sub_drone += np.sin(4 * np.pi * drone_freq * t) * 0.08
     audio += sub_drone
 
-    # C) Arpeggiator Synth (Starts from Scene 3: 6.0s - 20.0s)
     arp_notes = [130.81, 164.81, 196.00, 261.63, 196.00, 164.81]
     sixteenth = beat_interval / 4.0
     for i in range(int(duration / sixteenth)):
@@ -71,7 +76,6 @@ def generate_soundtrack(filename, duration, sample_rate=44100):
                 saw = 0.6 * np.sin(2 * np.pi * note_freq * nt) + 0.3 * np.sin(4 * np.pi * note_freq * nt)
                 audio[idx:idx + nsamples] += saw * env * 0.18
 
-    # D) Transition Impacts & Risers at Scene Changes
     impact_times = [0.0, 3.0, 6.0, 9.5, 13.0]
     for it in impact_times:
         idx = int(it * sample_rate)
@@ -83,7 +87,6 @@ def generate_soundtrack(filename, duration, sample_rate=44100):
             noise = (np.random.rand(ns) * 2 - 1) * np.exp(-15 * it_t) * 0.25
             audio[idx:idx + ns] += boom + noise
 
-    # E) Final Fade-out at 20.0s - 21.0s
     fade_start = int(20.0 * sample_rate)
     fade_len = len(t) - fade_start
     audio[fade_start:] *= np.linspace(1.0, 0.0, fade_len)
@@ -101,14 +104,14 @@ def generate_soundtrack(filename, duration, sample_rate=44100):
     print(f"[+] Audio track synthesized successfully: {filename}", flush=True)
 
 # ------------------------------------------------------------------------------
-# 2. FRAME RENDERING ENGINE WITH KINETIC TYPOGRAPHY & MOTION GRAPHICS
+# 2. FRAME RENDERING ENGINE WITH VECTOR GRAPHICS & TYPOGRAPHY
 # ------------------------------------------------------------------------------
 def get_font(size, bold=True):
     font_names = [
         "C:\\Windows\\Fonts\\segoeuib.ttf" if bold else "C:\\Windows\\Fonts\\segoeui.ttf",
         "C:\\Windows\\Fonts\\arialbd.ttf" if bold else "C:\\Windows\\Fonts\\arial.ttf",
-        "C:\\Windows\\Fonts\\impact.ttf",
-        "C:\\Windows\\Fonts\\tahoma.ttf"
+        "C:\\Windows\\Fonts\\tahomabd.ttf" if bold else "C:\\Windows\\Fonts\\tahoma.ttf",
+        "C:\\Windows\\Fonts\\impact.ttf"
     ]
     for fn in font_names:
         if os.path.exists(fn):
@@ -129,6 +132,38 @@ def draw_vignette_and_bars(draw):
     bar_height = 36
     draw.rectangle([(0, 0), (WIDTH, bar_height)], fill=(2, 6, 23))
     draw.rectangle([(0, HEIGHT - bar_height), (WIDTH, HEIGHT)], fill=(2, 6, 23))
+
+def draw_rust_vector_logo(draw, cx, cy, radius=24, color=(246, 130, 31)):
+    # Outer Gear Ring
+    draw.ellipse([(cx - radius, cy - radius), (cx + radius, cy + radius)], outline=color, width=3)
+    for i in range(8):
+        ang = i * (math.pi / 4)
+        gx = cx + math.cos(ang) * (radius + 4)
+        gy = cy + math.sin(ang) * (radius + 4)
+        draw.rectangle([(gx - 3, gy - 3), (gx + 3, gy + 3)], fill=color)
+    # Inner Hub
+    inner_r = radius // 2
+    draw.ellipse([(cx - inner_r, cy - inner_r), (cx + inner_r, cy + inner_r)], outline=color, width=2)
+    f_r = get_font(18, bold=True)
+    draw.text((cx, cy), "R", font=f_r, fill=(255, 255, 255), anchor="mm")
+
+def draw_dataset_vector_logo(draw, cx, cy, radius=22, color=(56, 189, 248)):
+    # 3 Stacked Cylinders
+    for dy in [-12, 0, 12]:
+        draw.ellipse([(cx - radius, cy + dy - 6), (cx + radius, cy + dy + 6)], outline=color, width=2)
+    draw.line([(cx - radius, cy - 12), (cx - radius, cy + 12)], fill=color, width=2)
+    draw.line([(cx + radius, cy - 12), (cx + radius, cy + 12)], fill=color, width=2)
+
+def draw_decision_vector_logo(draw, cx, cy, radius=22, color=(168, 85, 247)):
+    # CPU Core Square
+    draw.rectangle([(cx - radius, cy - radius), (cx + radius, cy + radius)], outline=color, width=2)
+    draw.rectangle([(cx - radius//2, cy - radius//2), (cx + radius//2, cy + radius//2)], fill=color)
+    # Bus Traces / Pins
+    for p in [-10, 0, 10]:
+        draw.line([(cx + p, cy - radius), (cx + p, cy - radius - 5)], fill=color, width=2)
+        draw.line([(cx + p, cy + radius), (cx + p, cy + radius + 5)], fill=color, width=2)
+        draw.line([(cx - radius, cy + p), (cx - radius - 5, cy + p)], fill=color, width=2)
+        draw.line([(cx + radius, cy + p), (cx + radius + 5, cy + p)], fill=color, width=2)
 
 def render_frame(f_idx):
     sec = f_idx / FPS
@@ -256,68 +291,85 @@ def render_frame(f_idx):
         draw.text((WIDTH//2, 580), "OFFICIAL INDUSTRY GRADE: A (HIGH-ASSURANCE RESILIENCE)", font=font_foot, fill=(245, 158, 11), anchor="mm")
 
     # --------------------------------------------------------------------------
-    # SCENE 5 (13.0s - 21.0s): COMPLETE ARCHITECTURAL TECHNOLOGY STACK & CREDITS
+    # SCENE 5 (13.0s - 21.0s): SIMPLE & ELEGANT 3-CARD STACK + DEVELOPER CREDIT
     # --------------------------------------------------------------------------
     else:
         draw.rectangle([(0, 0), (WIDTH, HEIGHT)], fill=(2, 6, 20))
         draw_cyber_grid(draw, f_idx, color=(14, 40, 75))
 
-        # Top Badge
+        # Top Category Pill
         font_badge = get_font(15, bold=True)
-        draw.rectangle([(WIDTH//2 - 220, 52), (WIDTH//2 + 220, 84)], outline=(6, 182, 212), width=1, fill=(10, 25, 45))
-        draw.text((WIDTH//2, 68), "ENGINEERING SPECIFICATION & COMPLETE TECHNOLOGY STACK", font=font_badge, fill=(6, 182, 212), anchor="mm")
+        draw.rectangle([(WIDTH//2 - 180, 50), (WIDTH//2 + 180, 82)], outline=(6, 182, 212), width=1, fill=(10, 25, 45))
+        draw.text((WIDTH//2, 66), "ARCHITECTURE & SYSTEM CREDITS", font=font_badge, fill=(6, 182, 212), anchor="mm")
 
-        # Section Headline
-        font_headline = get_font(34, bold=True)
-        draw.text((WIDTH//2, 114), "ROKH WAF ARCHITECTURAL COMPONENTS", font=font_headline, fill=(255, 255, 255), anchor="mm")
+        # Main Developer Title (Simple, clean, exactly as requested: 'توسعه دهنده: طاها وزیری')
+        font_dev_en = get_font(42, bold=True)
+        draw.text((WIDTH//2, 118), "DEVELOPER: TAHA VAZIRI", font=font_dev_en, fill=(255, 255, 255), anchor="mm")
 
-        # 8 Full Technology Cards (4 Columns x 2 Rows)
-        tech_cards = [
-            ("Rust Tokio / Axum", "L7 Async Reverse Proxy", "Zero-Copy, 100k+ Sockets", (246, 130, 31)),
-            ("OWASP CRS 4.0 DFA", "Deterministic Automata", "Linear O(N) ReDoS Immune", (16, 185, 129)),
-            ("Shannon Entropy AI", "Mathematical Brain", "Zero-Day & Shellcode AI", (6, 182, 212)),
-            ("SHA-256 Proof-of-Work", "Under-Attack PoW Defense", "Client-Side Anti-DDoS", (168, 85, 247)),
-            ("5-Pass Deobfuscator", "Anti-Evasion Pipeline", "Resolves URL, Unicode, Nulls", (6, 182, 212)),
-            ("Token-Bucket Limiter", "Adaptive Rate Limiting", "Sliding Windows & IP Jail", (246, 130, 31)),
-            ("FastAPI & Uvicorn", "Real-Time SOC Center", "WebSockets Event Stream", (16, 185, 129)),
-            ("SQLite 3 WAL Mode", "Zero-Stall Telemetry", "Async Non-Blocking Logging", (168, 85, 247))
+        font_dev_fa = get_font(24, bold=True)
+        draw.text((WIDTH//2, 162), "توسعه دهنده: طاها وزیری", font=font_dev_fa, fill=(6, 182, 212), anchor="mm")
+
+        # 3 Clean Large Cards with Distinct Colors and Vector Logos
+        cards_data = [
+            {
+                "title_fa": "زبان هسته Rust",
+                "title_en": "Core Language: Rust",
+                "sub": "Tokio Async Engine & Zero-Copy Proxy",
+                "color": (246, 130, 31),
+                "draw_icon": draw_rust_vector_logo
+            },
+            {
+                "title_fa": "دیتاست ها برای یادگیری ماشین",
+                "title_en": "Machine Learning Datasets",
+                "sub": "SecLists Corpora & Python Vectorizer",
+                "color": (56, 189, 248),
+                "draw_icon": draw_dataset_vector_logo
+            },
+            {
+                "title_fa": "زبان ماشین تصمیم گیری",
+                "title_en": "Decision Machine Engine",
+                "sub": "Shannon Entropy AI & DFA Automata",
+                "color": (168, 85, 247),
+                "draw_icon": draw_decision_vector_logo
+            }
         ]
 
-        cols = 4
-        box_w = 270
-        box_h = 135
-        gap_x = 24
-        gap_y = 18
-        grid_total_w = cols * box_w + (cols - 1) * gap_x
-        grid_start_x = (WIDTH - grid_total_w) // 2
-        grid_start_y = 155
+        card_w = 360
+        card_h = 240
+        gap = 30
+        total_w = len(cards_data) * card_w + (len(cards_data) - 1) * gap
+        start_x = (WIDTH - total_w) // 2
+        card_y = 215
 
-        font_t_title = get_font(18, bold=True)
-        font_t_role = get_font(14, bold=True)
-        font_t_desc = get_font(12, bold=False)
+        font_c_title_fa = get_font(21, bold=True)
+        font_c_title_en = get_font(17, bold=True)
+        font_c_sub = get_font(13, bold=False)
 
-        for idx, (name, role, desc, col) in enumerate(tech_cards):
-            r = idx // cols
-            c = idx % cols
-            bx = grid_start_x + c * (box_w + gap_x)
-            by = grid_start_y + r * (box_h + gap_y)
+        for i, cd in enumerate(cards_data):
+            cx = start_x + i * (card_w + gap)
+            cy = card_y
 
-            # Box background and outline
-            draw.rectangle([(bx, by), (bx + box_w, by + box_h)], fill=(12, 18, 34), outline=(30, 45, 75), width=1)
-            # Accent top line
-            draw.rectangle([(bx, by), (bx + box_w, by + 4)], fill=col)
+            # Outer Card Box
+            draw.rectangle([(cx, cy), (cx + card_w, cy + card_h)], fill=(12, 18, 34), outline=cd["color"], width=2)
+            # Glowing Accent Top Line
+            draw.rectangle([(cx, cy), (cx + card_w, cy + 6)], fill=cd["color"])
 
-            # Card texts
-            draw.text((bx + 16, by + 28), name, font=font_t_title, fill=col)
-            draw.text((bx + 16, by + 58), role, font=font_t_role, fill=(255, 255, 255))
-            draw.text((bx + 16, by + 88), desc, font=font_t_desc, fill=(148, 163, 184))
+            # Center Vector Icon
+            icon_cx = cx + card_w // 2
+            icon_cy = cy + 55
+            cd["draw_icon"](draw, icon_cx, icon_cy, radius=26, color=cd["color"])
 
-        # Bottom Footer Bar with Developer Credits
-        font_credit_title = get_font(18, bold=True)
-        font_credit_repo = get_font(14, bold=False)
-        draw.rectangle([(WIDTH//2 - 460, 520), (WIDTH//2 + 460, 580)], fill=(8, 14, 28), outline=(6, 182, 212), width=1)
-        draw.text((WIDTH//2, 540), "SYSTEM ARCHITECT & LEAD DEVELOPER: TAHA VAZIRI", font=font_credit_title, fill=(255, 255, 255), anchor="mm")
-        draw.text((WIDTH//2, 565), "OPEN SOURCE UNDER MIT LICENSE  |  GITHUB: HTTPS://GITHUB.COM/LASTPW/ROKH-WAF", font=font_credit_repo, fill=(147, 197, 253), anchor="mm")
+            # Persian Title
+            draw.text((cx + card_w // 2, cy + 125), cd["title_fa"], font=font_c_title_fa, fill=(255, 255, 255), anchor="mm")
+            # English Title
+            draw.text((cx + card_w // 2, cy + 160), cd["title_en"], font=font_c_title_en, fill=cd["color"], anchor="mm")
+            # Subtitle Description
+            draw.text((cx + card_w // 2, cy + 195), cd["sub"], font=font_c_sub, fill=(148, 163, 184), anchor="mm")
+
+        # Bottom Bar
+        font_footer = get_font(15, bold=True)
+        draw.rectangle([(WIDTH//2 - 420, 570), (WIDTH//2 + 420, 615)], fill=(8, 14, 28), outline=(6, 182, 212), width=1)
+        draw.text((WIDTH//2, 592), "ROKH WAF | OPEN-SOURCE EDGE DEFENSE | HTTPS://GITHUB.COM/LASTPW/ROKH-WAF", font=font_footer, fill=(147, 197, 253), anchor="mm")
 
     draw_vignette_and_bars(draw)
     return img
@@ -328,15 +380,16 @@ def render_frame(f_idx):
 def main():
     print("=" * 70, flush=True)
     print(" [*] RENDERING FULL-HD COMMERCIAL MOTION GRAPHIC VIDEO (MP4)", flush=True)
-    print(f" Resolution : {WIDTH}x{HEIGHT} @ {FPS} FPS")
-    print(f" Duration   : {DURATION_SEC} Seconds ({TOTAL_FRAMES} frames)")
-    print(f" Output MP4 : {OUTPUT_MP4}")
+    print(f" Resolution    : {WIDTH}x{HEIGHT} @ {FPS} FPS")
+    print(f" Duration      : {DURATION_SEC} Seconds ({TOTAL_FRAMES} frames)")
+    print(f" Primary Path  : {OUTPUT_DESKTOP_MP4}")
+    print(f" Project Path  : {OUTPUT_PROJECT_MP4}")
     print("=" * 70, flush=True)
 
     # 1. Synthesize Soundtrack
     generate_soundtrack(TEMP_AUDIO, DURATION_SEC)
 
-    # 2. Launch FFmpeg Process for rawvideo stream
+    # 2. Launch FFmpeg Process for rawvideo stream directly to Project MP4
     cmd = [
         "ffmpeg",
         "-y",
@@ -354,7 +407,7 @@ def main():
         "-c:a", "aac",
         "-b:a", "192k",
         "-shortest",
-        OUTPUT_MP4
+        OUTPUT_PROJECT_MP4
     ]
 
     print("[*] Launching FFmpeg encoder...", flush=True)
@@ -374,10 +427,17 @@ def main():
         if proc.returncode != 0:
             print("[!] FFmpeg process returned error code", flush=True)
         else:
-            size_mb = os.path.getsize(OUTPUT_MP4) / (1024 * 1024)
+            # Also copy directly to Desktop so user has it right on their desktop screen!
+            try:
+                shutil.copyfile(OUTPUT_PROJECT_MP4, OUTPUT_DESKTOP_MP4)
+            except Exception as ce:
+                print(f"[!] Notice copying to desktop: {ce}", flush=True)
+
+            size_mb = os.path.getsize(OUTPUT_PROJECT_MP4) / (1024 * 1024)
             print("=" * 70, flush=True)
-            print(f"[+] SUCCESS: Video rendered successfully!", flush=True)
-            print(f"    File: {OUTPUT_MP4} ({size_mb:.2f} MB)", flush=True)
+            print(f"[+] SUCCESS: Video rendered and saved in two locations!", flush=True)
+            print(f" [1] Directly on Desktop: {OUTPUT_DESKTOP_MP4} ({size_mb:.2f} MB)", flush=True)
+            print(f" [2] Project Directory  : {OUTPUT_PROJECT_MP4}", flush=True)
             print("=" * 70, flush=True)
     except Exception as e:
         print(f"[!] Render failed: {e}", flush=True)

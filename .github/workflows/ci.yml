@@ -1,0 +1,38 @@
+name: ROKH WAF CI
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+    branches: [ "master", "main" ]
+
+jobs:
+  rust-check:
+    name: Rust Core Proxy Engine
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+      - name: Cargo Check
+        run: cargo check --verbose
+      - name: Cargo Test
+        run: cargo test --verbose
+
+  python-tests:
+    name: AI Threat Engine & Security Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install fastapi uvicorn requests pydantic
+      - name: Run AI Neural Threat Verification
+        run: python tests/test_ai_engine.py

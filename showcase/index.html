@@ -1,0 +1,1420 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>سامانه دیواره آتش ابری رُخ (Rokh WAF) — مستندات و انیمیشن معماری سیستم جهت ارائه داوری</title>
+    <!-- Google Fonts: Vazirmatn & JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Vazirmatn:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            /* Cloudflare & High-End Systems Architecture Theme */
+            --bg-deep: #07090e;
+            --bg-card: rgba(13, 18, 30, 0.85);
+            --border-card: rgba(255, 255, 255, 0.08);
+            --border-hover: rgba(246, 130, 31, 0.4);
+            
+            --cf-orange: #f6821f;
+            --cf-orange-light: #fb923c;
+            --tech-cyan: #06b6d4;
+            --tech-indigo: #6366f1;
+            --tech-emerald: #10b981;
+            --tech-violet: #8b5cf6;
+            --tech-red: #ef4444;
+            
+            --text-heading: #ffffff;
+            --text-regular: #cbd5e1;
+            --text-muted: #64748b;
+            
+            --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+            --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        body {
+            background-color: #030509;
+            color: var(--text-regular);
+            font-family: 'Vazirmatn', -apple-system, BlinkMacSystemFont, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(circle at 50% 0%, rgba(99, 102, 241, 0.1) 0%, transparent 60%),
+                radial-gradient(circle at 85% 90%, rgba(246, 130, 31, 0.08) 0%, transparent 50%);
+        }
+
+        /* 16:9 Master Cinema Viewport */
+        .cinema-viewport {
+            width: 100%;
+            max-width: 1240px;
+            aspect-ratio: 16 / 9;
+            background: var(--bg-deep);
+            position: relative;
+            border-radius: 20px;
+            overflow: hidden;
+            perspective: 1200px;
+            box-shadow: 
+                0 30px 100px rgba(0, 0, 0, 0.85),
+                0 0 0 1px rgba(255, 255, 255, 0.08),
+                0 0 60px rgba(246, 130, 31, 0.05);
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Ambient Dynamic Dot Grid & Light Orbs */
+        .ambient-mesh {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1;
+            background-image: radial-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+            background-size: 32px 32px;
+            opacity: 0.65;
+        }
+
+        .ambient-glow-orb {
+            position: absolute;
+            width: 500px;
+            height: 500px;
+            border-radius: 50%;
+            filter: blur(120px);
+            opacity: 0.22;
+            pointer-events: none;
+            z-index: 1;
+            transition: all 1.2s var(--ease-out-expo);
+        }
+
+        .orb-1 { top: -100px; right: -80px; background: radial-gradient(circle, var(--tech-indigo) 0%, transparent 70%); }
+        .orb-2 { bottom: -120px; left: -100px; background: radial-gradient(circle, var(--cf-orange) 0%, transparent 70%); }
+
+        /* Dynamic Vector Background Canvas */
+        #bgCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+            pointer-events: none;
+        }
+
+        /* -------------------------------------------------------------
+           STAGE SCENES: SPACIOUS, TECHNICAL & STAGGERED
+           ------------------------------------------------------------- */
+        .stage-scenes-wrapper {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            z-index: 5;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .scene-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            padding: 30px 60px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(24px) scale(0.97);
+            transition: 
+                opacity 0.65s var(--ease-out-expo),
+                transform 0.65s var(--ease-out-expo),
+                visibility 0.65s;
+            pointer-events: none;
+        }
+
+        .scene-container.active {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0) scale(1);
+            pointer-events: auto;
+        }
+
+        /* Staggered Element Reveals */
+        .scene-container.active .reveal-1 {
+            opacity: 1;
+            transform: translateY(0);
+            transition: opacity 0.5s var(--ease-out-expo) 0.08s, transform 0.5s var(--ease-out-expo) 0.08s;
+        }
+        .scene-container.active .reveal-2 {
+            opacity: 1;
+            transform: translateY(0);
+            transition: opacity 0.5s var(--ease-out-expo) 0.18s, transform 0.5s var(--ease-out-expo) 0.18s;
+        }
+        .scene-container.active .reveal-3 {
+            opacity: 1;
+            transform: translateY(0);
+            transition: opacity 0.6s var(--ease-out-expo) 0.28s, transform 0.6s var(--ease-out-expo) 0.28s;
+        }
+
+        .anim-item {
+            opacity: 0;
+            transform: translateY(16px);
+        }
+
+        /* Technical Badges & Headers */
+        .pill-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 14px;
+            border-radius: 9999px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+            margin-bottom: 14px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.09);
+            color: #e2e8f0;
+            backdrop-filter: blur(10px);
+        }
+
+        .pill-badge .dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--cf-orange);
+            box-shadow: 0 0 10px var(--cf-orange);
+        }
+
+        .pill-badge.cyan .dot { background: var(--tech-cyan); box-shadow: 0 0 10px var(--tech-cyan); }
+        .pill-badge.indigo .dot { background: var(--tech-indigo); box-shadow: 0 0 10px var(--tech-indigo); }
+        .pill-badge.emerald .dot { background: var(--tech-emerald); box-shadow: 0 0 10px var(--tech-emerald); }
+        .pill-badge.violet .dot { background: var(--tech-violet); box-shadow: 0 0 10px var(--tech-violet); }
+
+        .scene-headline {
+            font-size: 32px;
+            font-weight: 800;
+            line-height: 1.35;
+            color: var(--text-heading);
+            margin-bottom: 12px;
+            text-align: center;
+            max-width: 960px;
+        }
+
+        .scene-headline span {
+            color: var(--cf-orange);
+        }
+
+        .scene-subtext {
+            font-size: 15px;
+            line-height: 1.75;
+            color: var(--text-regular);
+            margin-bottom: 24px;
+            text-align: center;
+            max-width: 840px;
+        }
+
+        /* -------------------------------------------------------------
+           TECHNICAL WORKBENCHES & SYSTEM DIAGRAMS
+           ------------------------------------------------------------- */
+        /* Animated Architecture Topology Flow */
+        .topology-flow-container {
+            width: 100%;
+            max-width: 960px;
+            background: rgba(13, 18, 30, 0.75);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            padding: 26px 36px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: relative;
+            backdrop-filter: blur(14px);
+            box-shadow: 0 16px 45px rgba(0, 0, 0, 0.5);
+            margin-top: 6px;
+            direction: rtl;
+        }
+
+        .topology-node {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            z-index: 2;
+            min-width: 170px;
+        }
+
+        .topology-node .node-icon-box {
+            width: 58px;
+            height: 58px;
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            margin-bottom: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            position: relative;
+        }
+
+        .node-clients .node-icon-box {
+            background: linear-gradient(135deg, #1e293b, #0f172a);
+            border-color: rgba(148, 163, 184, 0.25);
+        }
+
+        .node-edge .node-icon-box {
+            width: 68px;
+            height: 68px;
+            background: linear-gradient(135deg, var(--cf-orange), #ea580c);
+            border-color: rgba(255, 255, 255, 0.35);
+            box-shadow: 0 0 35px rgba(246, 130, 31, 0.45);
+            animation: pulseShield 2s infinite alternate;
+        }
+
+        @keyframes pulseShield {
+            0% { box-shadow: 0 0 25px rgba(246, 130, 31, 0.3); transform: scale(0.98); }
+            100% { box-shadow: 0 0 50px rgba(246, 130, 31, 0.65); transform: scale(1.02); }
+        }
+
+        .node-origin .node-icon-box {
+            background: linear-gradient(135deg, #064e3b, #065f46);
+            border-color: rgba(16, 185, 129, 0.35);
+            box-shadow: 0 0 25px rgba(16, 185, 129, 0.25);
+        }
+
+        .topology-node h4 {
+            font-size: 14px;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 4px;
+        }
+
+        .topology-node .node-badge {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            padding: 3px 8px;
+            border-radius: 9999px;
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--text-muted);
+        }
+
+        /* Connecting Beams with Animated Flowing Packets */
+        .topology-beam {
+            flex: 1;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.08);
+            position: relative;
+            margin: 0 16px;
+            border-radius: 2px;
+            overflow: visible;
+        }
+
+        .topology-beam .beam-light {
+            position: absolute;
+            height: 100%;
+            width: 40%;
+            border-radius: 2px;
+            animation: beamFlow 1.6s infinite linear;
+        }
+
+        .beam-ingress .beam-light {
+            background: linear-gradient(90deg, transparent, #ef4444, #f59e0b, transparent);
+        }
+
+        .beam-egress .beam-light {
+            background: linear-gradient(90deg, transparent, var(--tech-emerald), transparent);
+            animation-delay: 0.8s;
+        }
+
+        @keyframes beamFlow {
+            0% { right: -40%; }
+            100% { right: 100%; }
+        }
+
+        .beam-label {
+            position: absolute;
+            top: -22px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10.5px;
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+
+        .split-grid-box {
+            display: grid;
+            grid-template-columns: 1.15fr 0.85fr;
+            gap: 32px;
+            align-items: center;
+            width: 100%;
+            max-width: 1080px;
+            text-align: right;
+        }
+
+        .code-terminal-box {
+            background: rgba(10, 14, 24, 0.9);
+            border: 1px solid var(--border-card);
+            border-radius: 14px;
+            overflow: hidden;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+            width: 100%;
+        }
+
+        .terminal-header {
+            background: rgba(255, 255, 255, 0.03);
+            border-bottom: 1px solid var(--border-card);
+            padding: 10px 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+            direction: ltr;
+        }
+
+        .terminal-dots {
+            display: flex;
+            gap: 6px;
+        }
+
+        .terminal-dots span {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .terminal-code {
+            padding: 18px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            line-height: 1.65;
+            color: #f1f5f9;
+            direction: ltr;
+            text-align: left;
+        }
+
+        .c-kw { color: #f472b6; font-weight: 700; }
+        .c-fn { color: #60a5fa; font-weight: 600; }
+        .c-typ { color: #34d399; }
+        .c-str { color: #fbbf24; }
+        .c-num { color: #f87171; }
+        .c-cm { color: #64748b; font-style: italic; }
+
+        /* Dynamic Deobfuscation Stepper */
+        .deob-pipeline-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 14px;
+            width: 100%;
+            max-width: 1040px;
+            margin-top: 10px;
+        }
+
+        .deob-step-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-card);
+            border-radius: 12px;
+            padding: 18px 16px;
+            text-align: right;
+            backdrop-filter: blur(12px);
+            transition: all 0.3s var(--ease-out-expo);
+            position: relative;
+        }
+
+        .deob-step-card:hover {
+            border-color: var(--border-hover);
+            transform: translateY(-3px);
+        }
+
+        .deob-step-card .step-num {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--cf-orange);
+            margin-bottom: 8px;
+            display: block;
+        }
+
+        .deob-step-card h4 {
+            font-size: 14px;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 6px;
+        }
+
+        .deob-step-card p {
+            font-size: 12px;
+            line-height: 1.65;
+            color: var(--text-muted);
+        }
+
+        .deob-step-card .sample-pill {
+            margin-top: 10px;
+            display: block;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            background: rgba(0, 0, 0, 0.4);
+            padding: 4px 8px;
+            border-radius: 6px;
+            direction: ltr;
+            text-align: left;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        /* 3-Tier DDoS Defense Matrix */
+        .tier-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            width: 100%;
+            max-width: 1040px;
+            margin-top: 10px;
+        }
+
+        .tier-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-card);
+            border-radius: 14px;
+            padding: 22px 20px;
+            text-align: right;
+            backdrop-filter: blur(14px);
+            transition: all 0.3s;
+        }
+
+        .tier-card.highlight {
+            border-color: var(--cf-orange);
+            background: rgba(246, 130, 31, 0.05);
+            box-shadow: 0 0 30px rgba(246, 130, 31, 0.12);
+        }
+
+        .tier-badge {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--text-muted);
+            display: inline-block;
+            margin-bottom: 12px;
+        }
+
+        .tier-card h4 {
+            font-size: 16px;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 8px;
+        }
+
+        .tier-card p {
+            font-size: 12.5px;
+            line-height: 1.7;
+            color: var(--text-muted);
+        }
+
+        /* Benchmark Metric Cards */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            width: 100%;
+            max-width: 1040px;
+            margin-top: 10px;
+        }
+
+        .metric-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-card);
+            border-radius: 14px;
+            padding: 24px 18px;
+            text-align: center;
+            backdrop-filter: blur(12px);
+        }
+
+        .metric-card.hero {
+            border-color: rgba(246, 130, 31, 0.45);
+            background: rgba(246, 130, 31, 0.05);
+            box-shadow: 0 0 35px rgba(246, 130, 31, 0.12);
+        }
+
+        .metric-num {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 38px;
+            font-weight: 800;
+            color: #fff;
+            margin-bottom: 6px;
+        }
+
+        .metric-card.hero .metric-num {
+            color: var(--cf-orange);
+        }
+
+        .metric-label {
+            font-size: 13.5px;
+            font-weight: 700;
+            color: var(--text-regular);
+            margin-bottom: 6px;
+        }
+
+        .metric-desc {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        /* -------------------------------------------------------------
+           BOTTOM SCRUBBER & CHAPTER DOCK
+           ------------------------------------------------------------- */
+        .viewport-footer {
+            position: relative;
+            z-index: 15;
+            background: rgba(7, 9, 14, 0.94);
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
+            padding: 12px 28px 14px 28px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            backdrop-filter: blur(16px);
+        }
+
+        .scrubber-track {
+            width: 100%;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 2px;
+            position: relative;
+            cursor: pointer;
+            overflow: hidden;
+        }
+
+        .scrubber-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, var(--cf-orange), var(--cf-orange-light));
+            box-shadow: 0 0 10px var(--cf-orange);
+            border-radius: 2px;
+            transition: width 0.05s linear;
+        }
+
+        .footer-dock {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .chapter-list {
+            display: flex;
+            gap: 14px;
+        }
+
+        .chapter-btn {
+            cursor: pointer;
+            padding: 3px 8px;
+            border-radius: 4px;
+            transition: all 0.25s;
+            opacity: 0.55;
+            font-family: 'Vazirmatn', sans-serif;
+            font-size: 12px;
+        }
+
+        .chapter-btn:hover {
+            opacity: 0.9;
+            color: #fff;
+        }
+
+        .chapter-btn.active {
+            opacity: 1;
+            color: var(--cf-orange);
+            font-weight: 700;
+            background: rgba(246, 130, 31, 0.1);
+        }
+
+        .playback-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .ctrl-btn {
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            color: var(--text-regular);
+            padding: 4px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+
+        .ctrl-btn:hover {
+            border-color: rgba(255, 255, 255, 0.25);
+            color: #fff;
+        }
+
+        .ctrl-btn.active-audio {
+            color: var(--tech-emerald);
+            border-color: rgba(16, 185, 129, 0.3);
+            background: rgba(16, 185, 129, 0.08);
+        }
+
+        /* External Meta Banner */
+        .external-bar {
+            width: 100%;
+            max-width: 1240px;
+            margin-top: 14px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+            color: var(--text-muted);
+            padding: 0 6px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 16:9 Master Viewport -->
+    <div class="cinema-viewport" id="cinemaViewport">
+        <!-- Ambient Mesh & Gradient Orbs -->
+        <div class="ambient-mesh"></div>
+        <div class="ambient-glow-orb orb-1" id="orb1"></div>
+        <div class="ambient-glow-orb orb-2" id="orb2"></div>
+
+        <!-- Dynamic Vector Network Canvas -->
+        <canvas id="bgCanvas"></canvas>
+
+        <!-- 7 Deeply Technical & Seamlessly Animated Persian Scenes -->
+        <div class="stage-scenes-wrapper">
+
+            <!-- SCENE 1 [00:00 - 00:06]: Topology & Edge Ingress -->
+            <div class="scene-container active" id="scene0">
+                <div class="pill-badge reveal-1 anim-item">
+                    <span class="dot"></span>
+                    <span>معماری لایه ۷ و خاتمه ارتباط در لبه شبکه (Anycast Edge)</span>
+                </div>
+                <h1 class="scene-headline reveal-2 anim-item">
+                    پالایش بلادرنگ بسته‌ها <span>پیش از رسیدن به سرور مبدا</span>
+                </h1>
+                <p class="scene-subtext reveal-3 anim-item">
+                    دست‌تکانی رمزنگاری TLS 1.3 با پروتکل 0-RTT در لبه شبکه خاتمه یافته و جریان داده به روش بدون کپی (Zero-Copy) مستقیماً وارد خط لوله بازرسی پکت‌ها می‌شود؛ بدون آنکه حتی ۱ بایت ترافیک مخرب حافظه سرور برنامه را درگیر کند.
+                </p>
+                <!-- 4 Balanced Architectural Metric Cards (Zero Emojis) -->
+                <div class="metrics-grid reveal-3 anim-item">
+                    <div class="metric-card">
+                        <div class="metric-num">0-RTT</div>
+                        <div class="metric-label">پروتکل امنیتی TLS 1.3</div>
+                        <div class="metric-desc">خاتمه در لبه بدون تاخیر رفت‌وبرگشت</div>
+                    </div>
+                    <div class="metric-card hero">
+                        <div class="metric-num">0.04<span style="font-size:18px;">ms</span></div>
+                        <div class="metric-label">تاخیر تخصیص Zero-Copy</div>
+                        <div class="metric-desc">هدایت مستقیم بافر حافظه Tokio</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-num">100k+</div>
+                        <div class="metric-label">سوکت فعال همزمان</div>
+                        <div class="metric-desc">پایداری کامل روی هر سرور پروکسی</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-num" style="color:var(--tech-emerald);">100<span style="font-size:18px;">%</span></div>
+                        <div class="metric-label">حفاظت از سرور مبدا</div>
+                        <div class="metric-desc">پالایش کامل پیش از نفوذ به لایه برنامه</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SCENE 2 [00:06 - 00:12]: 5-Layer Recursive Deobfuscation -->
+            <div class="scene-container" id="scene1">
+                <div class="pill-badge cyan reveal-1 anim-item">
+                    <span class="dot"></span>
+                    <span>خط لوله بازگشتی رمزگشایی و نرمال‌سازی (5-Pass Normalizer)</span>
+                </div>
+                <h2 class="scene-headline reveal-2 anim-item">
+                    خنثی‌سازی تکنیک‌های Evasion و دور زدن <span>در ۵ لایه بازگشتی</span>
+                </h2>
+                <div class="deob-pipeline-grid reveal-3 anim-item">
+                    <div class="deob-step-card">
+                        <span class="step-num">مرحله ۰۱ // URL Decode</span>
+                        <h4>شکستن انکود چندگانه</h4>
+                        <p>شکستن انکودینگ‌های تو در تو تا رسیدن به ریشه خام پی‌لود نفوذ.</p>
+                        <span class="sample-pill">%252e%252e%2f → ../</span>
+                    </div>
+                    <div class="deob-step-card">
+                        <span class="step-num">مرحله ۰۲ // HTML5 Entities</span>
+                        <h4>تبدیل انتیتی‌های وب</h4>
+                        <p>تبدیل اتوماتیک کاراکترهای اسکیپ‌شده جهت کشف تگ‌های پنهان XSS.</p>
+                        <span class="sample-pill">&amp;colon;&amp;quot; → :"</span>
+                    </div>
+                    <div class="deob-step-card">
+                        <span class="step-num">مرحله ۰۳ // Full-Width</span>
+                        <h4>نرمال‌سازی یونیکد</h4>
+                        <p>تبدیل کاراکترهای تمام‌عرض به فرم استاندارد NFKC و حذف بایت‌های نال.</p>
+                        <span class="sample-pill">＜script＞ → &lt;script&gt;</span>
+                    </div>
+                    <div class="deob-step-card">
+                        <span class="step-num">مرحله ۰۴ // SQL Comments</span>
+                        <h4>حذف کامنت‌های تفرقه</h4>
+                        <p>پالایش کامنت‌های تزریق‌شده درون کلمات کلیدی پایگاه داده پیش از بررسی.</p>
+                        <span class="sample-pill">UN/**/ION → UNION</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SCENE 3 [00:12 - 00:18]: Rust Tokio Engine & DFA Automata -->
+            <div class="scene-container" id="scene2">
+                <div class="pill-badge indigo reveal-1 anim-item">
+                    <span class="dot"></span>
+                    <span>هسته پردازش زبان رابست و اتوماتای قطعی (Rust DFA Core)</span>
+                </div>
+                <h2 class="scene-headline reveal-2 anim-item">
+                    تطبیق خطی O(N) با <span>مصونیت ۱۰۰٪ در برابر حملات ReDoS</span>
+                </h2>
+                <div class="split-grid-box reveal-3 anim-item">
+                    <div>
+                        <p class="scene-subtext" style="text-align:right; margin-bottom:16px;">
+                            موتورهای سنتی با عبارات منظم دچار فاجعه بازگشتی (ReDoS Catastrophic Backtracking) و قفل پردازنده می‌شوند. رُخ از اتوماتای متناهی قطعی (DFA) با زمان پردازش خطی قطعی بهره می‌برد.
+                        </p>
+                        <div style="display:flex; gap:12px;">
+                            <div style="background:rgba(255,255,255,0.03); border:1px solid var(--border-card); padding:10px 14px; border-radius:8px;">
+                                <div style="font-family:'JetBrains Mono'; font-size:11px; color:var(--text-muted);">پیچیدگی زمانی</div>
+                                <div style="font-family:'JetBrains Mono'; font-size:16px; font-weight:700; color:#fff;">O(N) Strict</div>
+                            </div>
+                            <div style="background:rgba(255,255,255,0.03); border:1px solid var(--border-card); padding:10px 14px; border-radius:8px;">
+                                <div style="font-family:'JetBrains Mono'; font-size:11px; color:var(--text-muted);">نشت حافظه</div>
+                                <div style="font-family:'JetBrains Mono'; font-size:16px; font-weight:700; color:var(--tech-emerald);">Zero Leak</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="code-terminal-box">
+                        <div class="terminal-header">
+                            <div class="terminal-dots"><span></span><span></span><span></span></div>
+                            <span>dfa_stream_evaluator.rs</span>
+                        </div>
+                        <div class="terminal-code">
+<span class="c-kw">pub fn</span> <span class="c-fn">eval_dfa</span>(payload: &amp;[<span class="c-typ">u8</span>]) -&gt; <span class="c-typ">Verdict</span> {
+    <span class="c-kw">let</span> <span class="c-kw">mut</span> state = <span class="c-typ">START</span>;
+    <span class="c-kw">for</span> &amp;b <span class="c-kw">in</span> payload {
+        state = <span class="c-typ">TABLE</span>[state][b <span class="c-kw">as</span> <span class="c-typ">usize</span>];
+        <span class="c-kw">if</span> state == <span class="c-typ">MATCH</span> { <span class="c-kw">return</span> <span class="c-typ">Verdict</span>::<span class="c-fn">Block</span>(); }
+    }
+    <span class="c-cm">// Latency: 0.05ms | 100% ReDoS Safe</span>
+    <span class="c-typ">Verdict</span>::<span class="c-fn">Clean</span>
+}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SCENE 4 [00:18 - 00:24]: Multi-Tier DDoS & PoW -->
+            <div class="scene-container" id="scene3">
+                <div class="pill-badge cyan reveal-1 anim-item">
+                    <span class="dot"></span>
+                    <span>سد دفاعی ضد دیداس و چالش محاسباتی کلاینت (Multi-Tier DDoS &amp; PoW)</span>
+                </div>
+                <h2 class="scene-headline reveal-2 anim-item">
+                    مهار ترافیک‌های طغیانی با <span>پازل رمزنگاری اثبات کار (PoW)</span>
+                </h2>
+                <div class="tier-grid reveal-3 anim-item">
+                    <div class="tier-card">
+                        <span class="tier-badge">سد اول // نرخ لغزان</span>
+                        <h4>Sliding Window Counter</h4>
+                        <p>شمارشگر حافظه با پنجره زمانی یک‌دقیقه‌ای برای هر IP. تخلیه فوری درخواست‌های مازاد با کد ۴۲۹ بدون باز کردن بافر پردازشی.</p>
+                    </div>
+                    <div class="tier-card highlight">
+                        <span class="tier-badge" style="color:var(--cf-orange);">سد دوم // فیوز مدار خودکار</span>
+                        <h4>Circuit Breaker (80 RPS)</h4>
+                        <p>پایش مداوم جهش ترافیک در کسری از ثانیه؛ در صورت عبور از آستانه، سوئیچ به وضعیت پایداری حداکثری و قرنطینه آی‌پی‌های مشکوک.</p>
+                    </div>
+                    <div class="tier-card">
+                        <span class="tier-badge">سد سوم // چالش بدون کپچا</span>
+                        <h4>SHA-256 Proof-of-Work</h4>
+                        <p>ارسال مسئله رمزنگاری برای پردازنده مرورگر مهاجمان؛ مهار کامل بات‌نت‌ها بدون ایجاد اصطکاک و کپچا برای کاربران انسانی.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SCENE 5 [00:24 - 00:30]: AI Shannon Entropy & SSTI Detection -->
+            <div class="scene-container" id="scene4">
+                <div class="pill-badge violet reveal-1 anim-item">
+                    <span class="dot"></span>
+                    <span>موتور هوش مصنوعی و انتروپی شنون (Shannon Entropy AI Brain)</span>
+                </div>
+                <h2 class="scene-headline reveal-2 anim-item">
+                    شناسایی حملات روز صفر بر پایه <span>میزان بی‌نظمی اطلاعات</span>
+                </h2>
+                <div class="split-grid-box reveal-3 anim-item">
+                    <div>
+                        <p class="scene-subtext" style="text-align:right; margin-bottom:14px;">
+                            تزریق‌های ناشناخته، شل‌کدها و حملات SSTI با امضاهای ثابت لو نمی‌روند. رُخ از فرمول ریاضی انتروپی اطلاعات شنون و توزیع کاراکتری استفاده می‌کند:
+                        </p>
+                        <div style="background:rgba(0,0,0,0.4); border:1px solid rgba(255,255,255,0.08); padding:14px 18px; border-radius:10px; font-family:'JetBrains Mono'; font-size:14px; color:var(--tech-cyan); direction:ltr; text-align:center; margin-bottom:14px;">
+                            H(X) = - ∑ P(x) · log₂ P(x)
+                        </div>
+                        <p style="font-size:13px; color:var(--text-muted); text-align:right;">
+                            انتروپی بالاتر از آستانه استاندارد (H &gt; 4.65) به همراه بردارسازی TF-IDF، نشان‌دهنده بایت‌های تصادفی یا پی‌لودهای تخریبی صفر-روزه است.
+                        </p>
+                    </div>
+                    <div class="code-terminal-box">
+                        <div class="terminal-header">
+                            <div class="terminal-dots"><span></span><span></span><span></span></div>
+                            <span>entropy_evaluator.py</span>
+                        </div>
+                        <div class="terminal-code">
+<span class="c-kw">def</span> <span class="c-fn">calc_entropy</span>(payload: <span class="c-typ">str</span>) -&gt; <span class="c-typ">float</span>:
+    counts = Counter(payload)
+    n = <span class="c-fn">len</span>(payload)
+    <span class="c-kw">return</span> -<span class="c-fn">sum</span>((c/n) * math.<span class="c-fn">log2</span>(c/n) 
+                <span class="c-kw">for</span> c <span class="c-kw">in</span> counts.values())
+
+<span class="c-cm"># Payload: "%20UNION%20SELECT%20BENCHMARK..."</span>
+<span class="c-cm"># H = 4.88 -> [ANOMALY DETECTED: BLOCKED]</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SCENE 6 [00:30 - 00:36]: Empirical Benchmark Metrics -->
+            <div class="scene-container" id="scene5">
+                <div class="pill-badge emerald reveal-1 anim-item">
+                    <span class="dot"></span>
+                    <span>نتایج ارزیابی آزمایشگاهی در برابر ۷۹۶ سناریوی واقعی (Mega-Scale Audit)</span>
+                </div>
+                <h2 class="scene-headline reveal-2 anim-item">
+                    متریک‌های کمی و <span>اثبات عملکرد در مقیاس عملیاتی</span>
+                </h2>
+                <div class="metrics-grid reveal-3 anim-item">
+                    <div class="metric-card hero">
+                        <div class="metric-num">0.12<span style="font-size:18px;">ms</span></div>
+                        <div class="metric-label">تاخیر P99 بازرسی پکت</div>
+                        <div class="metric-desc">P50 = 0.04ms · بدون افت رتبه سئو</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-num" style="color:var(--tech-emerald);">93.9<span style="font-size:18px;">%</span></div>
+                        <div class="metric-label">نرخ مهار بردارهای OWASP</div>
+                        <div class="metric-desc">۴۵۸ حمله نفوذ سنگین مسدودشده</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-num" style="color:var(--tech-cyan);">0.00<span style="font-size:18px;">%</span></div>
+                        <div class="metric-label">نرخ خطای کاذب (False Positive)</div>
+                        <div class="metric-desc">۰ درخواست مجاز مسدودشده</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-num" style="color:var(--tech-violet);">18.4<span style="font-size:18px;">MB</span></div>
+                        <div class="metric-label">مصرف پایدار حافظه رم (RSS)</div>
+                        <div class="metric-desc">معماری بدون نشت حافظه</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SCENE 7 [00:24 - 00:28]: Developer Credits -->
+            <div class="scene-container" id="scene6">
+                <div class="pill-badge reveal-1 anim-item">
+                    <span class="dot"></span>
+                    <span>شناسنامه مهندسی سامانه (Project Credits)</span>
+                </div>
+                <h2 class="scene-headline reveal-2 anim-item" style="font-size:36px; margin-bottom:14px;">
+                    نام توسعه‌دهنده: <span>طاها وزیری</span>
+                </h2>
+                <p class="scene-subtext reveal-3 anim-item" style="max-width:760px; margin-bottom:20px;">
+                    پیاده‌سازی معماری پردازش غیرهمگام با زبان Rust، موتور تطبیق اتوماتای متناهی قطعی (DFA)، الگوریتم انتروپی ریاضی شنون و سد دفاعی چندمرحله‌ای ضد دیداس.
+                </p>
+                <div class="reveal-3 anim-item" style="display:flex; gap:16px;">
+                    <div style="background:rgba(255,255,255,0.03); border:1px solid var(--border-card); padding:12px 20px; border-radius:10px; text-align:center;">
+                        <div style="font-family:'JetBrains Mono'; font-size:11px; color:var(--text-muted); margin-bottom:4px;">توسعه‌دهنده اصلی</div>
+                        <div style="font-size:16px; font-weight:700; color:#fff;">طاها وزیری</div>
+                    </div>
+                    <div style="background:rgba(255,255,255,0.03); border:1px solid var(--border-card); padding:12px 20px; border-radius:10px; text-align:center;">
+                        <div style="font-family:'JetBrains Mono'; font-size:11px; color:var(--text-muted); margin-bottom:4px;">زبان هسته مرکزی</div>
+                        <div style="font-family:'JetBrains Mono'; font-size:16px; font-weight:700; color:var(--cf-orange);">Rust Tokio Core</div>
+                    </div>
+                    <div style="background:rgba(255,255,255,0.03); border:1px solid var(--border-card); padding:12px 20px; border-radius:10px; text-align:center;">
+                        <div style="font-family:'JetBrains Mono'; font-size:11px; color:var(--text-muted); margin-bottom:4px;">پایگاه قوانین</div>
+                        <div style="font-family:'JetBrains Mono'; font-size:16px; font-weight:700; color:var(--tech-emerald);">OWASP CRS 4.0</div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Bottom Controls & Timeline Scrubber Dock -->
+        <footer class="viewport-footer">
+            <div class="scrubber-track" id="scrubberTrack" onclick="handleScrubber(event)">
+                <div class="scrubber-fill" id="scrubberFill"></div>
+            </div>
+            <div class="footer-dock">
+                <div class="chapter-list">
+                    <span class="chapter-btn active" id="ch0" onclick="jumpToScene(0)">۰۱. لبه Anycast</span>
+                    <span class="chapter-btn" id="ch1" onclick="jumpToScene(1)">۰۲. دی‌اوبفوسکیشن ۵ لایه</span>
+                    <span class="chapter-btn" id="ch2" onclick="jumpToScene(2)">۰۳. موتور Rust DFA</span>
+                    <span class="chapter-btn" id="ch3" onclick="jumpToScene(3)">۰۴. مهار دیداس و PoW</span>
+                    <span class="chapter-btn" id="ch4" onclick="jumpToScene(4)">۰۵. انتروپی شنون</span>
+                    <span class="chapter-btn" id="ch5" onclick="jumpToScene(5)">۰۶. مگا بنچمارک</span>
+                    <span class="chapter-btn" id="ch6" onclick="jumpToScene(6)">۰۷. توسعه‌دهنده</span>
+                </div>
+                <div class="playback-actions">
+                    <span id="timecodeDisplay">00:00 / 00:28</span>
+                    <button class="ctrl-btn" id="btnPlayPause" onclick="togglePlay()">توقف</button>
+                    <button class="ctrl-btn active-audio" id="btnAudio" onclick="toggleAudio()">صدا: روشن</button>
+                    <button class="ctrl-btn" onclick="toggleFullscreen()">تمام‌صفحه</button>
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <!-- External Deck -->
+    <div class="external-bar">
+        <div>پروژه دیواره آتش ابری رُخ (Rokh WAF) | توسعه‌دهنده: <strong style="color:#fff;">طاها وزیری</strong></div>
+        <div>وضعیت پروکسی لوکال: <span style="font-family:'JetBrains Mono'; color:var(--tech-cyan);">127.0.0.1:8080 (فعال)</span></div>
+    </div>
+
+    <!-- =============================================================
+         CLEAN HARMONIC AUDIO SYNTHESIZER & KINETIC SCENE SCRIPT
+         (NO WHITE NOISE, NO DRONE, NO AIRPLANE SOUNDS)
+         ============================================================= -->
+    <script>
+        // -------------------------------------------------------------
+        // 1. PROFESSIONAL HIGH-TECH SOUNDTRACK SYNTHESIZER
+        //    (Polyphonic warm chord pad, 120BPM pulse, crystal bell stingers)
+        // -------------------------------------------------------------
+        let audioCtx = null;
+        let isAudioOn = true;
+        let padGain = null;
+        let padFilter = null;
+        let compressor = null;
+        let activePadOscs = [];
+
+        // 7 Scene Chords (4.0 seconds each, 28.0s loop)
+        // 120 BPM: 1 beat = 0.5s, 1 bar = 2.0s, 2 bars per scene = 4.0s
+        const sceneChords = [
+            [174.61, 261.63, 349.23], // Scene 0: F minor [F3, C4, F4] (Deep Ingress)
+            [207.65, 311.13, 523.25], // Scene 1: Ab major [Ab3, Eb4, C5] (Deobfuscate)
+            [233.08, 349.23, 554.37], // Scene 2: Bb minor [Bb3, F4, Db5] (Rust DFA)
+            [138.59, 207.65, 349.23], // Scene 3: Db major [Db3, Ab3, F4] (DDoS PoW)
+            [155.56, 233.08, 392.00], // Scene 4: Eb major [Eb3, Bb3, G4] (Shannon AI)
+            [130.81, 196.00, 311.13], // Scene 5: C minor [C3, G3, Eb4] (Peak Benchmark)
+            [174.61, 220.00, 349.23]  // Scene 6: F major [F3, A3, F4] (Majestic Finale: Taha Vaziri)
+        ];
+
+        const sceneBellFreqs = [523.25, 659.25, 783.99, 698.46, 880.00, 1046.50, 1174.66];
+
+        function initAudioEngine() {
+            if (audioCtx) {
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                return;
+            }
+            try {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+                // Master Limiter / Dynamics Compressor
+                compressor = audioCtx.createDynamicsCompressor();
+                compressor.threshold.setValueAtTime(-14, audioCtx.currentTime);
+                compressor.knee.setValueAtTime(8, audioCtx.currentTime);
+                compressor.ratio.setValueAtTime(4, audioCtx.currentTime);
+                compressor.attack.setValueAtTime(0.003, audioCtx.currentTime);
+                compressor.release.setValueAtTime(0.15, audioCtx.currentTime);
+                compressor.connect(audioCtx.destination);
+
+                // Master Pad Lowpass Filter
+                padFilter = audioCtx.createBiquadFilter();
+                padFilter.type = 'lowpass';
+                padFilter.frequency.setValueAtTime(460, audioCtx.currentTime);
+                padFilter.Q.setValueAtTime(1.8, audioCtx.currentTime);
+
+                padGain = audioCtx.createGain();
+                padGain.gain.setValueAtTime(0.075, audioCtx.currentTime);
+
+                padFilter.connect(padGain);
+                padGain.connect(compressor);
+
+                // Start current scene pad chord
+                playSceneChord(activeScene);
+            } catch (e) {
+                console.warn("Audio init deferred", e);
+            }
+        }
+
+        function playSceneChord(sceneIndex) {
+            if (!isAudioOn || !audioCtx) return;
+            const now = audioCtx.currentTime;
+
+            // Fade out previous pad oscillators cleanly
+            activePadOscs.forEach(o => {
+                try {
+                    o.gain.gain.linearRampToValueAtTime(0.0001, now + 0.35);
+                    o.osc.stop(now + 0.38);
+                } catch(e) {}
+            });
+            activePadOscs = [];
+
+            // Trigger fresh warm polyphonic chord
+            const freqs = sceneChords[sceneIndex] || sceneChords[0];
+            freqs.forEach((freq, idx) => {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+
+                osc.type = (idx === 0) ? 'triangle' : 'sine';
+                osc.frequency.setValueAtTime(freq + (idx === 1 ? 0.6 : -0.5), now);
+
+                gain.gain.setValueAtTime(0.0001, now);
+                gain.gain.linearRampToValueAtTime(0.065 / freqs.length, now + 0.45);
+
+                osc.connect(gain);
+                gain.connect(padFilter);
+
+                osc.start(now);
+                activePadOscs.push({ osc, gain });
+            });
+        }
+
+        // Modern Minimalist Tech Kick (Warm sine 75Hz -> 42Hz, no distortion)
+        function triggerTechKick(time) {
+            if (!isAudioOn || !audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(75, time);
+            osc.frequency.exponentialRampToValueAtTime(42, time + 0.12);
+
+            gain.gain.setValueAtTime(0.12, time);
+            gain.gain.exponentialRampToValueAtTime(0.001, time + 0.14);
+
+            osc.connect(gain);
+            gain.connect(compressor || audioCtx.destination);
+
+            osc.start(time);
+            osc.stop(time + 0.15);
+        }
+
+        // Crisp High-Tech Clockwork Tick (Micro click)
+        function triggerTechTick(time) {
+            if (!isAudioOn || !audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(2400, time);
+
+            gain.gain.setValueAtTime(0.016, time);
+            gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.02);
+
+            osc.connect(gain);
+            gain.connect(compressor || audioCtx.destination);
+
+            osc.start(time);
+            osc.stop(time + 0.025);
+        }
+
+        // Crystal Bell Ping + Sub Impact on Scene Shift
+        function playSceneTransitionSound(sceneIndex) {
+            if (!isAudioOn || !audioCtx) return;
+            const now = audioCtx.currentTime;
+
+            // 1. Crystal Harmonic Bell
+            const bellFreq = sceneBellFreqs[sceneIndex] || 523.25;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(bellFreq, now);
+
+            gain.gain.setValueAtTime(0.07, now);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.65);
+
+            osc.connect(gain);
+            gain.connect(compressor || audioCtx.destination);
+
+            osc.start(now);
+            osc.stop(now + 0.7);
+
+            // 2. Harmonic Fifth Overtone
+            const osc2 = audioCtx.createOscillator();
+            const gain2 = audioCtx.createGain();
+            osc2.type = 'sine';
+            osc2.frequency.setValueAtTime(bellFreq * 1.5, now);
+            gain2.gain.setValueAtTime(0.03, now);
+            gain2.gain.exponentialRampToValueAtTime(0.0001, now + 0.45);
+            osc2.connect(gain2);
+            gain2.connect(compressor || audioCtx.destination);
+            osc2.start(now);
+            osc2.stop(now + 0.5);
+        }
+
+        // Rhythm Scheduler (120 BPM: 1 beat = 0.5s)
+        let lastBeatStep = -1;
+        function tickAudioClock(timelineSec) {
+            if (!isAudioOn || !audioCtx) return;
+            const currentBeat = Math.floor(timelineSec * 4); // 8th note steps
+            if (currentBeat !== lastBeatStep) {
+                lastBeatStep = currentBeat;
+                const now = audioCtx.currentTime;
+                if (currentBeat % 2 === 0) {
+                    triggerTechKick(now);
+                } else {
+                    triggerTechTick(now);
+                }
+            }
+        }
+
+        function toggleAudio() {
+            isAudioOn = !isAudioOn;
+            const btn = document.getElementById('btnAudio');
+            if (isAudioOn) {
+                initAudioEngine();
+                if (padGain) padGain.gain.setValueAtTime(0.075, audioCtx.currentTime);
+                btn.classList.add('active-audio');
+                btn.innerText = 'صدا: روشن';
+                playSceneChord(activeScene);
+                playSceneTransitionSound(activeScene);
+            } else {
+                if (padGain && audioCtx) padGain.gain.setValueAtTime(0.00001, audioCtx.currentTime);
+                btn.classList.remove('active-audio');
+                btn.innerText = 'صدا: خاموش';
+            }
+        }
+
+        // -------------------------------------------------------------
+        // 2. TIMELINE & STAGGERED TRANSITION CONTROLLER (28s, 7 SCENES, 4s/SCENE)
+        // -------------------------------------------------------------
+        const TOTAL_DURATION = 28.0;
+        const SCENES_COUNT = 7;
+        const SCENE_DURATION = 4.0; // Max 4.0 seconds per section
+        let currentTime = 0.0;
+        let isPlaying = true;
+        let activeScene = 0;
+        let lastTime = performance.now();
+
+        const sceneOrbs = [
+            { o1: '#6366f1', o2: '#f6821f' },
+            { o1: '#06b6d4', o2: '#3b82f6' },
+            { o1: '#6366f1', o2: '#8b5cf6' },
+            { o1: '#06b6d4', o2: '#10b981' },
+            { o1: '#8b5cf6', o2: '#f6821f' },
+            { o1: '#10b981', o2: '#f6821f' },
+            { o1: '#f6821f', o2: '#6366f1' }
+        ];
+
+        function updateLoop(dt) {
+            if (!isPlaying) return;
+            currentTime += dt;
+            if (currentTime >= TOTAL_DURATION) {
+                currentTime = 0.0;
+            }
+
+            const currentIdx = Math.min(Math.floor(currentTime / SCENE_DURATION), SCENES_COUNT - 1);
+            if (currentIdx !== activeScene) {
+                switchScene(currentIdx);
+            }
+
+            tickAudioClock(currentTime);
+
+            // Update Progress Bar
+            const pct = (currentTime / TOTAL_DURATION) * 100;
+            document.getElementById('scrubberFill').style.width = `${pct}%`;
+
+            // Update Timecode
+            const sec = Math.floor(currentTime);
+            document.getElementById('timecodeDisplay').innerText = 
+                `00:${sec < 10 ? '0' : ''}${sec} / 00:28`;
+        }
+
+        function switchScene(index) {
+            activeScene = index;
+
+            for (let i = 0; i < SCENES_COUNT; i++) {
+                const sc = document.getElementById(`scene${i}`);
+                const ch = document.getElementById(`ch${i}`);
+
+                if (i === index) {
+                    sc.classList.add('active');
+                    if (ch) ch.classList.add('active');
+                } else {
+                    sc.classList.remove('active');
+                    if (ch) ch.classList.remove('active');
+                }
+            }
+
+            // Update background glow orbs
+            const orb = sceneOrbs[index];
+            document.getElementById('orb1').style.background = `radial-gradient(circle, ${orb.o1} 0%, transparent 70%)`;
+            document.getElementById('orb2').style.background = `radial-gradient(circle, ${orb.o2} 0%, transparent 70%)`;
+
+            // Switch musical chord & play stinger chime
+            playSceneChord(index);
+            playSceneTransitionSound(index);
+        }
+
+        function jumpToScene(index) {
+            currentTime = index * SCENE_DURATION + 0.05;
+            switchScene(index);
+        }
+
+        function handleScrubber(e) {
+            const rect = document.getElementById('scrubberTrack').getBoundingClientRect();
+            const ratio = (e.clientX - rect.left) / rect.width;
+            currentTime = ratio * TOTAL_DURATION;
+            const target = Math.min(Math.floor(currentTime / SCENE_DURATION), SCENES_COUNT - 1);
+            switchScene(target);
+        }
+
+        function togglePlay() {
+            isPlaying = !isPlaying;
+            document.getElementById('btnPlayPause').innerText = isPlaying ? 'توقف' : 'پخش';
+            if (isPlaying) {
+                lastTime = performance.now();
+            }
+        }
+
+        function toggleFullscreen() {
+            const vp = document.getElementById('cinemaViewport');
+            if (!document.fullscreenElement) {
+                vp.requestFullscreen().catch(() => {});
+            } else {
+                document.exitFullscreen().catch(() => {});
+            }
+        }
+
+        // -------------------------------------------------------------
+        // 3. BACKGROUND CANVAS: ELEGANT TOPOLOGY & DATA BEAM
+        // -------------------------------------------------------------
+        const canvas = document.getElementById('bgCanvas');
+        const ctx = canvas.getContext('2d');
+        const viewport = document.getElementById('cinemaViewport');
+        let width, height;
+
+        function resize() {
+            width = canvas.width = viewport.clientWidth;
+            height = canvas.height = viewport.clientHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        const nodes = [];
+        for (let i = 0; i < 24; i++) {
+            nodes.push({
+                x: Math.random(),
+                y: Math.random(),
+                vx: (Math.random() - 0.5) * 0.0003,
+                vy: (Math.random() - 0.5) * 0.0003,
+                size: 2 + Math.random() * 2
+            });
+        }
+
+        function drawCanvasNetwork(now) {
+            ctx.clearRect(0, 0, width, height);
+
+            ctx.save();
+            ctx.fillStyle = 'rgba(246, 130, 31, 0.45)';
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+
+            nodes.forEach(n => {
+                n.x += n.vx;
+                n.y += n.vy;
+                if (n.x < 0.03 || n.x > 0.97) n.vx *= -1;
+                if (n.y < 0.03 || n.y > 0.97) n.vy *= -1;
+
+                const px = n.x * width;
+                const py = n.y * height;
+
+                ctx.beginPath();
+                ctx.arc(px, py, n.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            for (let i = 0; i < nodes.length; i++) {
+                for (let j = i + 1; j < nodes.length; j++) {
+                    const dx = (nodes[i].x - nodes[j].x) * width;
+                    const dy = (nodes[i].y - nodes[j].y) * height;
+                    const d = Math.sqrt(dx * dx + dy * dy);
+                    if (d < 170) {
+                        ctx.beginPath();
+                        ctx.moveTo(nodes[i].x * width, nodes[i].y * height);
+                        ctx.lineTo(nodes[j].x * width, nodes[j].y * height);
+                        ctx.strokeStyle = `rgba(246, 130, 31, ${0.1 * (1 - d / 170)})`;
+                        ctx.stroke();
+                    }
+                }
+            }
+
+            // Flowing Data Packet Beam
+            const beamY = height * 0.93;
+            const t = (now * 0.0008) % 1;
+            const beamX = width * t;
+
+            ctx.beginPath();
+            ctx.arc(beamX, beamY, 3, 0, Math.PI * 2);
+            ctx.fillStyle = '#f6821f';
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = '#f6821f';
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        // Mouse 3D perspective tilt
+        viewport.addEventListener('mousemove', (e) => {
+            const rect = viewport.getBoundingClientRect();
+            const x = (e.clientX - rect.left) / rect.width - 0.5;
+            const y = (e.clientY - rect.top) / rect.height - 0.5;
+            const wrapper = document.querySelector('.stage-scenes-wrapper');
+            if (wrapper) {
+                wrapper.style.transform = `rotateY(${x * 4}deg) rotateX(${-y * 4}deg)`;
+            }
+        });
+
+        viewport.addEventListener('mouseleave', () => {
+            const wrapper = document.querySelector('.stage-scenes-wrapper');
+            if (wrapper) {
+                wrapper.style.transform = `rotateY(0deg) rotateX(0deg)`;
+            }
+        });
+
+        // Main Animation Loop
+        function animLoop(now) {
+            const dt = (now - lastTime) / 1000.0;
+            lastTime = now;
+
+            updateLoop(dt);
+            drawCanvasNetwork(now);
+
+            requestAnimationFrame(animLoop);
+        }
+
+        requestAnimationFrame(ts => {
+            lastTime = ts;
+            requestAnimationFrame(animLoop);
+        });
+
+        // Initialize audio on first user touch / click
+        window.addEventListener('click', () => {
+            initAudioEngine();
+        }, { once: true });
+    </script>
+</body>
+</html>

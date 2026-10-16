@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ROKH WAF - 16:9 Kinetic Motion Graphic Commercial</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=JetBrains+Mono:wght@400;700;800&family=Inter:wght@400;600;800;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-void: #030712;
+            --neon-cyan: #00f3ff;
+            --neon-blue: #3b82f6;
+            --neon-crimson: #ff0055;
+            --neon-amber: #f59e0b;
+            --neon-emerald: #10b981;
+            --text-platinum: #f8fafc;
+            --safe-margin-action: rgba(0, 243, 255, 0.25);
+            --safe-margin-title: rgba(245, 158, 11, 0.25);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+        }
+
+        body {
+            background-color: #010309;
+            color: var(--text-platinum);
+            font-family: 'Inter', sans-serif;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            overflow-x: hidden;
+        }
+
+        /* 16:9 Cinema Aspect Ratio Viewport */
+        .cinema-container {
+            width: 100%;
+            max-width: 1280px;
+            aspect-ratio: 16 / 9;
+            background: var(--bg-void);
+            position: relative;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 25px 80px rgba(0, 0, 0, 0.9), 0 0 50px rgba(0, 243, 255, 0.15);
+            border: 1px solid rgba(56, 189, 248, 0.2);
+        }
+
+        /* Safe Margins Overlay (Broadcast Standards) */
+        .safe-margins-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 100;
+            display: none;
+        }
+
+        .safe-margins-overlay.active {
+            display: block;
+        }
+
+        .margin-action {
+            position: absolute;
+            top: 5%;
+            left: 5%;
+            width: 90%;
+            height: 90%;
+            border: 1px dashed var(--safe-margin-action);
+        }
+        .margin-action::after {
+            content: 'ACTION SAFE (90%)';
+            position: absolute;
+            top: 6px;
+            left: 10px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: var(--neon-cyan);
+            letter-spacing: 1px;
+        }
+
+        .margin-title {
+            position: absolute;
+            top: 10%;
+            left: 10%;
+            width: 80%;
+            height: 80%;
+            border: 1px dashed var(--safe-margin-title);
+        }
+        .margin-title::after {
+            content: 'TITLE SAFE (80%)';
+            position: absolute;
+            top: 6px;
+            left: 10px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            color: var(--neon-amber);
+            letter-spacing: 1px;
+        }
+
+        /* Canvas Particle & Shader Layer */
+        #fxCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+        }
+
+        /* Stage Scene Container */
+        .stage {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 5;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 40px;
+            text-align: center;
+            pointer-events: none;
+        }
+
+        /* Individual Kinetic Scenes */
+        .scene {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            opacity: 0;
+            transform: scale(0.95);
+            transition: opacity 0.35s cubic-bezier(0.4, 0, 0.2, 1), transform 0.4s cubic-bezier(0.1, 0.8, 0.2, 1);
+            pointer-events: none;
+            padding: 50px;
+        }
+
+        .scene.active {
+            opacity: 1;
+            transform: scale(1);
+            pointer-events: auto;
+        }
+
+        /* Scene 1: The Breach */
+        .alarm-tag {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            font-weight: 800;
+            letter-spacing: 3px;
+            color: var(--neon-crimson);
+            background: rgba(255, 0, 85, 0.12);
+            border: 1px solid var(--neon-crimson);
+            padding: 6px 16px;
+            border-radius: 999px;
+            margin-bottom: 24px;
+            animation: pulseGlow 1.2s infinite alternate;
+        }
+
+        .hero-title-glitch {
+            font-family: 'Orbitron', 'Inter', sans-serif;
+            font-size: 64px;
+            font-weight: 900;
+            line-height: 1.05;
+            letter-spacing: 2px;
+            color: #ffffff;
+            text-transform: uppercase;
+            text-shadow: 0 0 30px rgba(255, 0, 85, 0.6);
+            margin-bottom: 20px;
+        }
+
+        .threat-pills {
+            display: flex;
+            gap: 12px;
+            margin-top: 16px;
+        }
+
+        .threat-pill {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            font-weight: 700;
+            color: #fca5a5;
+            background: rgba(220, 38, 38, 0.2);
+            border: 1px solid rgba(239, 68, 68, 0.4);
+            padding: 8px 18px;
+            border-radius: 8px;
+        }
+
+        /* Scene 2: The Bottleneck */
+        .bottleneck-title {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 52px;
+            font-weight: 900;
+            color: #ffffff;
+            margin-bottom: 28px;
+            text-shadow: 0 0 25px rgba(245, 158, 11, 0.4);
+        }
+
+        .flaw-cards {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            max-width: 900px;
+            width: 100%;
+        }
+
+        .flaw-card {
+            background: rgba(15, 23, 42, 0.85);
+            border: 1px solid rgba(245, 158, 11, 0.3);
+            border-radius: 14px;
+            padding: 24px;
+            text-align: left;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        }
+
+        .flaw-val {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 32px;
+            font-weight: 800;
+            color: var(--neon-amber);
+            margin-bottom: 8px;
+        }
+
+        .flaw-label {
+            font-size: 13px;
+            color: #94a3b8;
+            line-height: 1.5;
+        }
+
+        /* Scene 3: The Hero Reveal */
+        .hero-badge-rust {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            font-weight: 800;
+            color: var(--neon-cyan);
+            letter-spacing: 3px;
+            background: rgba(0, 243, 255, 0.1);
+            border: 1px solid var(--neon-cyan);
+            padding: 6px 20px;
+            border-radius: 999px;
+            margin-bottom: 18px;
+        }
+
+        .brand-name-epic {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 84px;
+            font-weight: 900;
+            letter-spacing: 6px;
+            background: linear-gradient(180deg, #ffffff 0%, var(--neon-cyan) 65%, #2563eb 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 0 50px rgba(0, 243, 255, 0.6);
+            margin-bottom: 12px;
+            line-height: 1;
+        }
+
+        .brand-slogan-epic {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: 5px;
+            color: #93c5fd;
+            text-transform: uppercase;
+        }
+
+        /* Scene 4: Killer Metrics */
+        .metric-cards-3d {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+            max-width: 1000px;
+            width: 100%;
+            margin-top: 20px;
+        }
+
+        .metric-card-3d {
+            background: rgba(15, 23, 42, 0.85);
+            border: 1px solid rgba(0, 243, 255, 0.35);
+            border-radius: 18px;
+            padding: 32px 24px;
+            backdrop-filter: blur(16px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), 0 0 30px rgba(0, 243, 255, 0.15);
+            transition: all 0.3s;
+        }
+
+        .metric-card-3d.highlight {
+            border-color: var(--neon-emerald);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), 0 0 35px rgba(16, 185, 129, 0.25);
+        }
+
+        .metric-num {
+            font-family: 'Orbitron', monospace;
+            font-size: 52px;
+            font-weight: 900;
+            color: var(--neon-cyan);
+            margin-bottom: 12px;
+            text-shadow: 0 0 25px rgba(0, 243, 255, 0.6);
+        }
+
+        .metric-num.green {
+            color: var(--neon-emerald);
+            text-shadow: 0 0 25px rgba(16, 185, 129, 0.6);
+        }
+
+        .metric-title {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
+            font-weight: 800;
+            color: #ffffff;
+            letter-spacing: 1px;
+            margin-bottom: 6px;
+        }
+
+        .metric-sub {
+            font-size: 12px;
+            color: #94a3b8;
+        }
+
+        /* Scene 5: Grand Finale CTA */
+        .cta-brand-title {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 64px;
+            font-weight: 900;
+            letter-spacing: 4px;
+            color: #ffffff;
+            margin-bottom: 16px;
+        }
+
+        .cta-subtext {
+            font-size: 20px;
+            color: #94a3b8;
+            margin-bottom: 32px;
+            max-width: 650px;
+            line-height: 1.5;
+        }
+
+        .btn-cta-glam {
+            background: linear-gradient(135deg, #00f3ff, #2563eb);
+            color: #030712;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 18px;
+            font-weight: 900;
+            letter-spacing: 1px;
+            padding: 18px 44px;
+            border-radius: 14px;
+            border: none;
+            cursor: pointer;
+            box-shadow: 0 0 40px rgba(0, 243, 255, 0.7);
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .btn-cta-glam:hover {
+            transform: scale(1.05) translateY(-3px);
+            box-shadow: 0 0 60px rgba(0, 243, 255, 0.9);
+        }
+
+        .cta-url-stamp {
+            margin-top: 24px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            color: #64748b;
+            letter-spacing: 2px;
+        }
+
+        @keyframes pulseGlow {
+            0% { transform: scale(0.97); opacity: 0.8; }
+            100% { transform: scale(1.03); opacity: 1; }
+        }
+
+        /* Video Director Bar */
+        .director-controls {
+            width: 100%;
+            max-width: 1280px;
+            background: rgba(15, 23, 42, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 14px;
+            padding: 14px 20px;
+            margin-top: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            backdrop-filter: blur(12px);
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .btn-director {
+            background: #1e293b;
+            border: 1px solid #334155;
+            color: #f8fafc;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-director:hover {
+            background: #334155;
+            border-color: var(--neon-cyan);
+            color: var(--neon-cyan);
+        }
+
+        .btn-director.active {
+            background: rgba(0, 243, 255, 0.2);
+            border-color: var(--neon-cyan);
+            color: var(--neon-cyan);
+        }
+
+        /* Timeline Scrubber */
+        .timeline-bar-wrapper {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            z-index: 50;
+            cursor: pointer;
+        }
+
+        .timeline-progress {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, var(--neon-cyan), var(--neon-emerald));
+            box-shadow: 0 0 15px var(--neon-cyan);
+            transition: width 0.05s linear;
+        }
+
+        .timecode-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            color: var(--neon-cyan);
+            font-weight: 700;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 16:9 Cinematic Video Display -->
+    <div class="cinema-container" id="cinemaContainer">
+        <!-- Background Canvas Shader -->
+        <canvas id="fxCanvas"></canvas>
+
+        <!-- Broadcast Safe Margins Overlay (Action Safe 90% & Title Safe 80%) -->
+        <div class="safe-margins-overlay" id="safeMargins">
+            <div class="margin-action"></div>
+            <div class="margin-title"></div>
+        </div>
+
+        <!-- Stage Container: 5 Synchronized Kinetic Typography Scenes -->
+        <div class="stage">
+            <!-- Scene 1 [00:00 - 00:04]: The Breach (Red Alert Chaos) -->
+            <div class="scene active" id="scene1">
+                <div class="alarm-tag">⚠️ ZERO-DAY BREACH THREAT DETECTED</div>
+                <h1 class="hero-title-glitch">YOUR SERVERS ARE<br>UNDER HEAVY ATTACK.</h1>
+                <div class="threat-pills">
+                    <div class="threat-pill">DDoS 850,000 RPS</div>
+                    <div class="threat-pill">SQLi ' OR 1=1</div>
+                    <div class="threat-pill">SSTI {{7*7}}</div>
+                    <div class="threat-pill">RCE ; whoami</div>
+                </div>
+            </div>
+
+            <!-- Scene 2 [00:04 - 00:08]: The Bottleneck (Legacy WAF Failure) -->
+            <div class="scene" id="scene2">
+                <div class="alarm-tag" style="color:var(--neon-amber); border-color:var(--neon-amber); background:rgba(245,158,11,0.1);">
+                    ❌ THE BOTTLENECK OF LEGACY SECURITY
+                </div>
+                <h2 class="bottleneck-title">TRADITIONAL WAFs FAIL YOUR TEAM.</h2>
+                <div class="flaw-cards">
+                    <div class="flaw-card">
+                        <div class="flaw-val">120 ms</div>
+                        <div class="flaw-label">Laggy request inspection destroying your user experience.</div>
+                    </div>
+                    <div class="flaw-card">
+                        <div class="flaw-val">15.4%</div>
+                        <div class="flaw-label">False positive rates blocking legitimate paying customers.</div>
+                    </div>
+                    <div class="flaw-card">
+                        <div class="flaw-val">100% CPU</div>
+                        <div class="flaw-label">Heavy RegEx catastrophic backtracking crashing the cluster.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Scene 3 [00:08 - 00:12]: The Hero Reveal (Rokh WAF) -->
+            <div class="scene" id="scene3">
+                <div class="hero-badge-rust">⚡ ZERO-OVERHEAD RUST DPI CORE</div>
+                <h1 class="brand-name-epic">ROKH WAF</h1>
+                <div class="brand-slogan-epic">THE SOVEREIGN CYBER FORTRESS</div>
+                <p style="margin-top:14px; font-size:13px; color:#94a3b8; font-family:'JetBrains Mono';">
+                    PARALLEL TOKEN STREAMING • ZERO-COPY MEMORY ARCHITECTURE • AI DEEP INSPECT
+                </p>
+            </div>
+
+            <!-- Scene 4 [00:12 - 00:16]: The Killer Metrics (Proof) -->
+            <div class="scene" id="scene4">
+                <div class="hero-badge-rust" style="color:var(--neon-emerald); border-color:var(--neon-emerald); background:rgba(16,185,129,0.1);">
+                    🏆 VERIFIED MEGA-SCALE AUDIT BENCHMARKS
+                </div>
+                <div class="metric-cards-3d">
+                    <div class="metric-card-3d">
+                        <div class="metric-num" id="metric1">0.12 ms</div>
+                        <div class="metric-title">SUB-MILLISECOND DPI</div>
+                        <div class="metric-sub">Zero noticeable latency penalty on production traffic.</div>
+                    </div>
+                    <div class="metric-card-3d highlight">
+                        <div class="metric-num green" id="metric2">93.9%</div>
+                        <div class="metric-title">LIVE OWASP BLOCK RATE</div>
+                        <div class="metric-sub">458/496 malicious vectors stopped cold at front door.</div>
+                    </div>
+                    <div class="metric-card-3d">
+                        <div class="metric-num" id="metric3">0.00%</div>
+                        <div class="metric-title">ZERO FALSE POSITIVES</div>
+                        <div class="metric-sub">100% legitimate clean users pass without friction.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Scene 5 [00:16 - 00:20]: Grand Finale (Call to Action) -->
+            <div class="scene" id="scene5">
+                <h1 class="cta-brand-title">DEFEND YOUR INFRASTRUCTURE.</h1>
+                <p class="cta-subtext">
+                    Join high-growth engineering teams securing their web applications with sub-millisecond Rust and AI neural protection.
+                </p>
+                <a href="http://127.0.0.1:9000/" target="_blank" class="btn-cta-glam">
+                    <span>🛡️</span> DEPLOY ROKH IN UNDER 5 MINUTES
+                </a>
+                <div class="cta-url-stamp">
+                    GATEWAY PROXY: 127.0.0.1:8080  |  ROKH-SECURITY.IO
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom Timeline Progress Bar -->
+        <div class="timeline-bar-wrapper" id="timelineScrubber" onclick="seekTimeline(event)">
+            <div class="timeline-progress" id="timelineProgress"></div>
+        </div>
+    </div>
+
+    <!-- Director Deck Bar (Controls & Overlays) -->
+    <div class="director-controls">
+        <div class="control-group">
+            <button class="btn-director" id="btnPlayPause" onclick="togglePlay()">
+                <span id="playIcon">⏸️</span> PAUSE
+            </button>
+            <button class="btn-director" onclick="restartCommercial()">
+                <span>🔄</span> RESTART
+            </button>
+            <div class="timecode-label" id="timecodeDisplay">00:00 / 00:20</div>
+        </div>
+
+        <div class="control-group">
+            <button class="btn-director" id="btnAudio" onclick="toggleAudio()">
+                <span id="audioIcon">🔊</span> AUDIO: ON
+            </button>
+            <button class="btn-director" id="btnSafeMargins" onclick="toggleSafeMargins()">
+                <span>📐</span> SAFE MARGINS
+            </button>
+            <button class="btn-director" onclick="toggleFullscreen()">
+                <span>⛶</span> FULLSCREEN
+            </button>
+            <a href="/video/commercial" download="waf_commercial_ad.mp4" style="text-decoration:none;">
+                <button class="btn-director" style="background:#065f46; border-color:#10b981; color:#a7f3d0;">
+                    <span>📥</span> DOWNLOAD MP4
+                </button>
+            </a>
+        </div>
+    </div>
+
+    <!-- Audio Synthesis & Animation Script -->
+    <script>
+        const canvas = document.getElementById('fxCanvas');
+        const ctx = canvas.getContext('2d');
+        const container = document.getElementById('cinemaContainer');
+
+        let width, height, centerX, centerY;
+        function resize() {
+            width = canvas.width = container.clientWidth;
+            height = canvas.height = container.clientHeight;
+            centerX = width / 2;
+            centerY = height / 2;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // -------------------------------------------------------------
+        // AUDIO SYNTHESIS SYSTEM (130 BPM CYBERPUNK TRAILER CUE)
+        // -------------------------------------------------------------
+        let audioCtx = null;
+        let audioEnabled = true;
+
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        function playKick(t) {
+            if (!audioEnabled || !audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.frequency.setValueAtTime(160, t);
+            osc.frequency.exponentialRampToValueAtTime(38, t + 0.18);
+            gain.gain.setValueAtTime(0.4, t);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start(t);
+            osc.stop(t + 0.18);
+        }
+
+        function playArp(t, freq) {
+            if (!audioEnabled || !audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(freq, t);
+            gain.gain.setValueAtTime(0.1, t);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start(t);
+            osc.stop(t + 0.12);
+        }
+
+        function playImpact(t) {
+            if (!audioEnabled || !audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(100, t);
+            osc.frequency.exponentialRampToValueAtTime(30, t + 0.8);
+            gain.gain.setValueAtTime(0.5, t);
+            gain.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start(t);
+            osc.stop(t + 0.8);
+        }
+
+        function toggleAudio() {
+            audioEnabled = !audioEnabled;
+            const btn = document.getElementById('btnAudio');
+            btn.innerHTML = audioEnabled ? '<span>🔊</span> AUDIO: ON' : '<span>🔇</span> AUDIO: OFF';
+            btn.classList.toggle('active', !audioEnabled);
+            if (audioEnabled) initAudio();
+        }
+
+        // -------------------------------------------------------------
+        // SCENE TIMELINE MANAGER (00:00 - 00:20)
+        // -------------------------------------------------------------
+        const TOTAL_DURATION = 20.0; // 20 Seconds
+        let currentTime = 0.0;
+        let isPlaying = true;
+        let lastFrameTimestamp = performance.now();
+        let lastBeatIndex = -1;
+
+        const scenes = [
+            { id: 'scene1', start: 0.0, end: 4.0 },
+            { id: 'scene2', start: 4.0, end: 8.0 },
+            { id: 'scene3', start: 8.0, end: 12.0 },
+            { id: 'scene4', start: 12.0, end: 16.0 },
+            { id: 'scene5', start: 16.0, end: 20.0 }
+        ];
+
+        function updateTimeline(dt) {
+            if (!isPlaying) return;
+            currentTime += dt;
+            if (currentTime >= TOTAL_DURATION) {
+                currentTime = 0.0; // Loop seamlessly
+                lastBeatIndex = -1;
+            }
+
+            // Sync Scene Visibility
+            scenes.forEach(s => {
+                const el = document.getElementById(s.id);
+                if (currentTime >= s.start && currentTime < s.end) {
+                    if (!el.classList.contains('active')) {
+                        el.classList.add('active');
+                        if (audioCtx) playImpact(audioCtx.currentTime);
+                    }
+                } else {
+                    el.classList.remove('active');
+                }
+            });
+
+            // Music Beat Scheduler (130 BPM = 0.461s per beat)
+            const beatInterval = 60.0 / 130.0;
+            const currentBeat = Math.floor(currentTime / beatInterval);
+            if (currentBeat !== lastBeatIndex) {
+                lastBeatIndex = currentBeat;
+                if (audioCtx && audioEnabled) {
+                    const now = audioCtx.currentTime;
+                    // Kicks start from Scene 2 onwards
+                    if (currentTime >= 4.0) playKick(now);
+                    // Fast Arpeggios during Scene 3 and 4
+                    if (currentTime >= 8.0 && currentTime < 16.0) {
+                        const notes = [130.81, 164.81, 196.00, 261.63, 196.00];
+                        playArp(now, notes[currentBeat % notes.length]);
+                    }
+                }
+            }
+
+            // Update Director Scrubber & Timecode
+            const pct = (currentTime / TOTAL_DURATION) * 100;
+            document.getElementById('timelineProgress').style.width = `${pct}%`;
+            const curSec = Math.floor(currentTime);
+            const curMs = Math.floor((currentTime % 1) * 100);
+            document.getElementById('timecodeDisplay').innerText = 
+                `00:${curSec < 10 ? '0' : ''}${curSec}.${curMs < 10 ? '0' : ''}${curMs} / 00:20`;
+        }
+
+        function togglePlay() {
+            isPlaying = !isPlaying;
+            document.getElementById('playIcon').innerText = isPlaying ? '⏸️' : '▶️';
+            document.getElementById('btnPlayPause').innerHTML = isPlaying ? '<span>⏸️</span> PAUSE' : '<span>▶️</span> PLAY';
+            if (isPlaying) {
+                lastFrameTimestamp = performance.now();
+                initAudio();
+            }
+        }
+
+        function restartCommercial() {
+            currentTime = 0.0;
+            lastBeatIndex = -1;
+            isPlaying = true;
+            document.getElementById('playIcon').innerText = '⏸️';
+            lastFrameTimestamp = performance.now();
+            initAudio();
+        }
+
+        function seekTimeline(e) {
+            const rect = document.getElementById('timelineScrubber').getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const ratio = clickX / rect.width;
+            currentTime = Math.max(0, Math.min(TOTAL_DURATION - 0.1, ratio * TOTAL_DURATION));
+            lastBeatIndex = -1;
+            initAudio();
+        }
+
+        function toggleSafeMargins() {
+            const overlay = document.getElementById('safeMargins');
+            overlay.classList.toggle('active');
+            document.getElementById('btnSafeMargins').classList.toggle('active', overlay.classList.contains('active'));
+        }
+
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                container.requestFullscreen().catch(() => {});
+            } else {
+                document.exitFullscreen().catch(() => {});
+            }
+        }
+
+        // -------------------------------------------------------------
+        // GRAPHICS & SHADER PARTICLES
+        // -------------------------------------------------------------
+        let angleShield = 0;
+        function renderSceneGraphics(time) {
+            ctx.clearRect(0, 0, width, height);
+
+            // Digital Cyber Grid
+            ctx.strokeStyle = 'rgba(15, 23, 42, 0.9)';
+            ctx.lineWidth = 1;
+            const grid = 50;
+            for (let x = 0; x < width; x += grid) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, height);
+                ctx.stroke();
+            }
+            for (let y = 0; y < height; y += grid) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(width, y);
+                ctx.stroke();
+            }
+
+            // Scene 1 Background Strobe
+            if (currentTime < 4.0) {
+                const strobe = Math.abs(Math.sin(currentTime * 12)) * 0.15;
+                ctx.fillStyle = `rgba(255, 0, 85, ${strobe})`;
+                ctx.fillRect(0, 0, width, height);
+            }
+
+            // Scene 3 & 4 & 5: Rotating Hexagonal Cyber Shield Core
+            if (currentTime >= 8.0) {
+                angleShield += 0.012;
+                ctx.save();
+                ctx.translate(centerX, centerY);
+
+                const pulse = Math.sin(time * 0.004) * 8;
+                const r = 180 + pulse;
+
+                // Glowing Neon Forcefield Orbit
+                ctx.rotate(angleShield);
+                ctx.strokeStyle = currentTime >= 16.0 ? '#10b981' : '#00f3ff';
+                ctx.shadowBlur = 30;
+                ctx.shadowColor = currentTime >= 16.0 ? '#10b981' : '#00f3ff';
+                ctx.lineWidth = 2;
+
+                ctx.beginPath();
+                for (let i = 0; i < 6; i++) {
+                    const a = i * Math.PI / 3;
+                    const hx = Math.cos(a) * r;
+                    const hy = Math.sin(a) * r;
+                    if (i === 0) ctx.moveTo(hx, hy);
+                    else ctx.lineTo(hx, hy);
+                }
+                ctx.closePath();
+                ctx.stroke();
+
+                // Counter-rotating inner ring
+                ctx.rotate(-angleShield * 2);
+                ctx.setLineDash([15, 15]);
+                ctx.strokeStyle = '#3b82f6';
+                ctx.beginPath();
+                ctx.arc(0, 0, r - 30, 0, Math.PI * 2);
+                ctx.stroke();
+
+                ctx.restore();
+            }
+        }
+
+        // -------------------------------------------------------------
+        // MAIN ANIMATION LOOP
+        // -------------------------------------------------------------
+        function loop(timestamp) {
+            const dt = (timestamp - lastFrameTimestamp) / 1000.0;
+            lastFrameTimestamp = timestamp;
+
+            updateTimeline(dt);
+            renderSceneGraphics(timestamp);
+
+            requestAnimationFrame(loop);
+        }
+
+        requestAnimationFrame((ts) => {
+            lastFrameTimestamp = ts;
+            requestAnimationFrame(loop);
+        });
+
+        // Initialize audio on first user click anywhere
+        window.addEventListener('click', () => {
+            initAudio();
+        }, { once: true });
+    </script>
+</body>
+</html>

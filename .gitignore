@@ -1,0 +1,49 @@
+# ==============================================================================
+# ROKH WAF - Git Ignore Rules
+# Author: Taha Vaziri (طاها وزیری)
+# ==============================================================================
+
+# Rust / Cargo
+/target/
+**/*.rs.bk
+*.pdb
+
+# Python Bytecode & Environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# SQLite Runtime Databases & Write-Ahead Logs
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Large Dataset CSV Files & Local Caches
+ai_engine/*.csv
+data_cache/
+*.csv
+
+# Media & Temporary Files
+temp_soundtrack.wav
+*.wav
+*.tmp
+*.log
+
+# Operating System & IDE Caches
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~

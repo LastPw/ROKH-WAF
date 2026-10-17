@@ -1,6 +1,7 @@
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import re
+import urllib.parse
 try:
     from benchmarks.mega_attack_benchmark import load_payloads
 except ImportError:
@@ -14,24 +15,25 @@ r_semi = re.compile(r"(;\s*(cat|whoami|id|ls|dir|net\s+user|wget|curl|nc|bash|sh
 r_chain = re.compile(r"(&&|\|\|)\s*(cat|whoami|id|ls|dir|net\s+user|wget|curl|nc|bash|sh|cmd\.exe|powershell)\b", re.I)
 r_sub = re.compile(r"(`[^`]+`|\$\([^)]+\))", re.I)
 
-# Enhanced patterns:
-# 1. Shell commands following newlines or start of input:
-r_newline = re.compile(r"(\r|\n|%0a|%0d)\s*(cat|whoami|id|ls|dir|wget|curl|nc|bash|sh|powershell|ping)\b", re.I)
-# 2. Binary invocations like /bin/sh, /bin/bash, /bin/cat, /usr/bin/id
-r_bin = re.compile(r"(/bin/(cat|sh|bash|id)|/usr/bin/(id|whoami|uname))", re.I)
-# 3. Direct RCE probes like `cat /`, `whoami`, `id;`
-r_direct = re.compile(r"(^|\s)(cat\s+/|whoami\b|/bin/cat|net\s+user)", re.I)
-# 4. Network utilities & PHP execution functions:
-r_php_net = re.compile(r"(\b(ping|nslookup|traceroute|phpinfo|passthru|shell_exec)\b|\b(system|exec)\s*\()", re.I)
+# Enhanced patterns matching Rust rules:
+r_cmd = re.compile(r"(^|[\s;&|`\n\r])(cat\s+[/.]|whoami\b|id\s*([;&|`\n\r]|$)|/bin/(cat|sh|bash|id)|/usr/bin/(id|whoami|uname)|net\s+user\b|dir\s+[a-zA-Z]:[/\\]|curl\s+https?://|wget\s+https?://)", re.I)
+r_shellshock = re.compile(r"\(\s*\)\s*\{\s*:;\s*\};", re.I)
+r_delim = re.compile(r"([;&|`\n\r]|%0a|%0d)\s*(cat|whoami|id|ls|dir|net\s+user|wget|curl|nc|bash|sh|cmd\.exe|powershell|ping)\b", re.I)
+r_php = re.compile(r"(\b(ping|nslookup|traceroute|phpinfo|passthru|shell_exec)\b|\b(system|exec|popen|proc_open)\s*\(|\{\$\{|/bin/(cat|sh|bash|id)|/usr/bin/(id|whoami|uname))", re.I)
+r_webshell = re.compile(r"(<\?php|<\?=|\$_get\[|\$_post\[|\$_request\[|\b(include|require)(_once)?\s*\(|\beval\s*\(|base64_decode\s*\(|echo\s+['\x22]<|>\s*rfi\.php)", re.I)
+r_evasion = re.compile(r"(\$(IFS|\{IFS\}|\{cat,|\{whoami,)|/dev/(tcp|udp)/\d+|\|\s*(base64\s+-d|sh|bash)\b|\{\$\{[^}]+\}\})", re.I)
 
 blocked = 0
 missed = []
 for p in rce_list:
     norm = urllib.parse.unquote(p)
-    if (r_pipe.search(p) or r_semi.search(p) or r_chain.search(p) or r_sub.search(p) or
-        r_pipe.search(norm) or r_semi.search(norm) or r_chain.search(norm) or r_sub.search(norm) or
-        r_newline.search(p) or r_bin.search(p) or r_bin.search(norm) or r_direct.search(norm) or
-        r_php_net.search(p) or r_php_net.search(norm)):
+    if (r_cmd.search(p) or r_cmd.search(norm) or
+        r_shellshock.search(p) or r_shellshock.search(norm) or
+        r_delim.search(p) or r_delim.search(norm) or
+        r_sub.search(p) or r_sub.search(norm) or
+        r_php.search(p) or r_php.search(norm) or
+        r_webshell.search(p) or r_webshell.search(norm) or
+        r_evasion.search(p) or r_evasion.search(norm)):
         blocked += 1
     else:
         missed.append(p)

@@ -56,18 +56,33 @@ impl Deobfuscator {
             .replace('；', ";")
             .replace('｜', "|");
 
-        // 5. Normalize SQL inline comments (e.g. UN/**/ION SEL/**/ECT -> UN ION SEL ECT)
+        // 5. Normalize SQL inline comments & unwrap MySQL executable comments
+        // (e.g. /*!50000SELECT*/ -> SELECT, and UN/**/ION -> UN ION)
         while let Some(start) = result.find("/*") {
             if let Some(end) = result[start..].find("*/") {
                 let actual_end = start + end + 2;
-                result.replace_range(start..actual_end, " ");
+                let comment_slice = &result[start..actual_end];
+                if comment_slice.starts_with("/*!") {
+                    // Unwrap MySQL conditional comment: strip /*! and digits up to the actual SQL token
+                    let inner = &comment_slice[3..comment_slice.len() - 2];
+                    let trimmed_inner = inner.trim_start_matches(|c: char| c.is_ascii_digit());
+                    let replacement = format!(" {} ", trimmed_inner.trim());
+                    result.replace_range(start..actual_end, &replacement);
+                } else {
+                    result.replace_range(start..actual_end, " ");
+                }
             } else {
                 break;
             }
         }
 
-        // 6. Whitespace and Control Character Normalization (mitigate tab/newline token splitting)
-        result = result.replace('\t', " ").replace('\r', " ").replace('\n', " ");
+        // 6. Whitespace and Control Character Normalization
+        // Normalize tabs to spaces, normalize \r\n and \r to \n (preserving \n for shell/header command boundaries)
+        result = result
+            .replace('\t', " ")
+            .replace("\r\n", "\n")
+            .replace('\r', "\n");
+
         while result.contains("  ") {
             result = result.replace("  ", " ");
         }
@@ -101,5 +116,19 @@ mod tests {
         let input = "&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;";
         let norm = Deobfuscator::normalize(input);
         assert!(norm.contains("<script>alert('xss')</script>"));
+    }
+
+    #[test]
+    fn test_mysql_executable_comment_unwrap() {
+        let input = "/*!50000SELECT*/ * /*!50000FROM*/ users";
+        let norm = Deobfuscator::normalize(input);
+        assert!(norm.contains("select") && norm.contains("from"));
+    }
+
+    #[test]
+    fn test_preserve_newline_for_rce() {
+        let input = "%0aid%0awhoami";
+        let norm = Deobfuscator::normalize(input);
+        assert!(norm.contains("\nid\nwhoami"));
     }
 }

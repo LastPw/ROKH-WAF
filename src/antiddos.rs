@@ -57,6 +57,7 @@ impl IpProfile {
 pub struct AntiDdosEngine {
     config: DdosConfig,
     profiles: Mutex<HashMap<String, IpProfile>>,
+    solved_nonces: Mutex<HashMap<String, u64>>,
     last_cleanup: Mutex<Instant>,
     secret_key: String,
     pub under_attack_mode: AtomicBool,
@@ -78,13 +79,16 @@ impl AntiDdosEngine {
             .as_secs();
 
         // Configurable or deterministic HMAC secret key (retains clearance cookies across restarts)
-        let secret_key = std::env::var("AEGIS_HMAC_SECRET").unwrap_or_else(|_| {
-            format!("aegis_ddos_key_{}_{}", now_sec, rand_u64())
-        });
+        let secret_key = std::env::var("AEGIS_HMAC_SECRET")
+            .or_else(|_| std::env::var("ROKH_HMAC_SECRET"))
+            .unwrap_or_else(|_| {
+                format!("rokh_ddos_key_{}_{}", now_sec, rand_u64())
+            });
 
         Self {
             config,
             profiles: Mutex::new(HashMap::new()),
+            solved_nonces: Mutex::new(HashMap::new()),
             last_cleanup: Mutex::new(Instant::now()),
             secret_key,
             under_attack_mode: AtomicBool::new(false),
@@ -235,9 +239,9 @@ impl AntiDdosEngine {
             .map(|s| s.as_str())
             .unwrap_or("/");
 
-        // Validate nonce format: <timestamp_unix>_<random_hex>
+        // Validate nonce format: <timestamp_unix>_<random_val>_<hmac_signature>
         let nonce_parts: Vec<&str> = nonce.split('_').collect();
-        if nonce_parts.len() != 2 {
+        if nonce_parts.len() != 3 {
             return DdosVerdict::Challenge(
                 (StatusCode::FORBIDDEN, "Invalid challenge nonce format.").into_response(),
             );
@@ -250,11 +254,38 @@ impl AntiDdosEngine {
             ),
         };
 
+        let rand_val: u64 = match nonce_parts[1].parse() {
+            Ok(v) => v,
+            Err(_) => return DdosVerdict::Challenge(
+                (StatusCode::FORBIDDEN, "Malformed challenge entropy.").into_response(),
+            ),
+        };
+
+        // Cryptographic Nonce Authentication: prevent offline forging
+        let expected_sig = self.generate_hmac_nonce(client_ip, nonce_time, rand_val);
+        if nonce_parts[2] != expected_sig {
+            return DdosVerdict::Challenge(
+                (StatusCode::FORBIDDEN, "Forged or invalid challenge signature.").into_response(),
+            );
+        }
+
         // Anti-replay: Nonce must be generated within the last 120 seconds
         if now_unix < nonce_time || now_unix - nonce_time > 120 {
             return DdosVerdict::Challenge(
                 (StatusCode::FORBIDDEN, "Challenge expired. Please reload and solve again.").into_response(),
             );
+        }
+
+        // Anti-replay: Verify nonce has not already been consumed
+        {
+            let mut solved = self.solved_nonces.lock().unwrap();
+            solved.retain(|_, &mut ts| now_unix <= ts + 180);
+            if solved.contains_key(nonce) {
+                return DdosVerdict::Challenge(
+                    (StatusCode::FORBIDDEN, "Challenge nonce already consumed (Replay Attack Detected).").into_response(),
+                );
+            }
+            solved.insert(nonce.to_string(), now_unix);
         }
 
         // Verify Proof of Work: sha256(client_ip + ":" + nonce + ":" + solution) must start with "0000"
@@ -300,7 +331,8 @@ impl AntiDdosEngine {
     /// Renders Cloudflare-style browser Proof-of-Work challenge page
     fn render_pow_challenge(&self, client_ip: &str, uri: &Uri) -> Response {
         let now_unix = current_unix_timestamp();
-        let nonce = format!("{}_{}", now_unix, rand_u64());
+        let rand_val = rand_u64();
+        let nonce = self.create_challenge_nonce(client_ip, now_unix, rand_val);
         let current_target = format!("{}{}", uri.path(), uri.query().map(|q| format!("?{}", q)).unwrap_or_default());
 
         let html = format!(r#"<!DOCTYPE html>
@@ -458,6 +490,20 @@ impl AntiDdosEngine {
         let mut hasher = Sha256::new();
         hasher.update(input.as_bytes());
         hex::encode(&hasher.finalize()[..16]) // 16-byte hex representation
+    }
+
+    /// Generates cryptographic HMAC signature for challenge nonces to prevent client-side forging
+    fn generate_hmac_nonce(&self, client_ip: &str, timestamp: u64, rand_val: u64) -> String {
+        let input = format!("{}:{}:{}:{}", self.secret_key, client_ip, timestamp, rand_val);
+        let mut hasher = Sha256::new();
+        hasher.update(input.as_bytes());
+        hex::encode(&hasher.finalize()[..8]) // 8-byte hex (16 chars)
+    }
+
+    /// Creates an authenticated, tamper-proof challenge nonce
+    pub fn create_challenge_nonce(&self, client_ip: &str, timestamp: u64, rand_val: u64) -> String {
+        let sig = self.generate_hmac_nonce(client_ip, timestamp, rand_val);
+        format!("{}_{}_{}", timestamp, rand_val, sig)
     }
 
     /// Records a request to compute global real-time Requests Per Second (RPS)
@@ -619,7 +665,7 @@ mod tests {
         let engine = AntiDdosEngine::new(DdosConfig::default());
         let client_ip = "10.0.0.4";
         let now_unix = current_unix_timestamp();
-        let nonce = format!("{}_{}", now_unix, 12345);
+        let nonce = engine.create_challenge_nonce(client_ip, now_unix, 12345);
 
         // Find solution
         let mut solution = 0;
@@ -645,6 +691,10 @@ mod tests {
                 let cookie = res.headers().get("set-cookie").unwrap().to_str().unwrap();
                 assert!(cookie.contains(CLEARANCE_COOKIE_NAME));
 
+                // Verify replay protection: resubmitting same nonce must be rejected
+                let replay_verdict = engine.handle_verification(client_ip, &verify_uri, now_unix);
+                assert!(matches!(replay_verdict, DdosVerdict::Challenge(_)));
+
                 // Now verify that the cookie grants immediate clearance
                 let mut headers = HeaderMap::new();
                 let cookie_val = cookie.split(';').next().unwrap();
@@ -657,5 +707,21 @@ mod tests {
             }
             _ => panic!("Valid PoW solution must succeed"),
         }
+    }
+
+    #[test]
+    fn test_pow_nonce_forgery_rejected() {
+        let engine = AntiDdosEngine::new(DdosConfig::default());
+        let client_ip = "10.0.0.5";
+        let now_unix = current_unix_timestamp();
+        // Attacker creates a fake nonce with arbitrary random and fake signature
+        let fake_nonce = format!("{}_{}_{}", now_unix, 99999, "fake_hmac_signature");
+
+        let verify_uri: Uri = format!("/__aegis_verify?nonce={}&solution=123", fake_nonce)
+            .parse()
+            .unwrap();
+
+        let verdict = engine.handle_verification(client_ip, &verify_uri, now_unix);
+        assert!(matches!(verdict, DdosVerdict::Challenge(_)));
     }
 }

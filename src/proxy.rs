@@ -51,23 +51,35 @@ pub async fn proxy_handler(
         .map(|a| a.contains("text/html"))
         .unwrap_or(false);
 
-    // 1.5 DDoS Management Endpoints (Restricted strictly to Internal Localhost SOC Communication)
-    if path.starts_with("/__aegis_ddos/") {
-        let is_internal_caller = addr.ip().is_loopback()
-            || parts
-                .headers
-                .get("x-aegis-internal-key")
-                .and_then(|h| h.to_str().ok())
-                == Some("aegis_soc_secret_2026");
+    // 1.5 DDoS Management Endpoints (Restricted strictly to Authenticated Internal SOC Communication)
+    if path.starts_with("/__aegis_ddos/") || path.starts_with("/__rokh_ddos/") {
+        let has_forwarded_header = parts.headers.contains_key("x-forwarded-for")
+            || parts.headers.contains_key("x-real-ip");
 
-        if !is_internal_caller {
+        let expected_secret = std::env::var("ROKH_SOC_SECRET")
+            .or_else(|_| std::env::var("AEGIS_SOC_SECRET"))
+            .unwrap_or_else(|_| "aegis_soc_secret_2026".to_string());
+
+        let provided_key = parts
+            .headers
+            .get("x-aegis-internal-key")
+            .or_else(|| parts.headers.get("x-rokh-internal-key"))
+            .and_then(|h| h.to_str().ok());
+
+        let has_valid_key = provided_key == Some(&expected_secret);
+
+        // If request came from local loopback AND has NO proxy headers, it is a genuine direct local process (e.g. SOC).
+        // If it has forwarded headers (e.g. from Nginx), it MUST supply the valid secret key.
+        let is_authorized = (addr.ip().is_loopback() && !has_forwarded_header) || has_valid_key;
+
+        if !is_authorized {
             return (
                 StatusCode::FORBIDDEN,
                 [("Content-Type", "application/json")],
                 json!({
-                    "waf": "AegisGuard WAF",
+                    "waf": "ROKH WAF",
                     "error": "Forbidden",
-                    "message": "Access Denied: DDoS management endpoints are restricted to internal localhost SOC callers."
+                    "message": "Access Denied: DDoS management endpoints are restricted to authenticated internal SOC callers."
                 })
                 .to_string(),
             )
@@ -568,7 +580,7 @@ async fn forward_to_backend(
 
             // Inject security headers on outgoing traffic
             response_builder = response_builder
-                .header("X-Protected-By", "AegisGuard-WAF/1.0")
+                .header("X-Protected-By", "ROKH-WAF/1.0")
                 .header("X-Content-Type-Options", "nosniff")
                 .header("X-Frame-Options", "DENY");
 
@@ -579,7 +591,7 @@ async fn forward_to_backend(
         }
         Err(err) => {
             let err_body = json!({
-                "waf": "AegisGuard WAF v1.0",
+                "waf": "ROKH WAF v1.0",
                 "error": "Bad Gateway",
                 "message": format!("Backend service unavailable at {}: {}", target_url, err)
             });

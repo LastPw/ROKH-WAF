@@ -196,7 +196,7 @@ pub async fn proxy_handler(
     state.metrics_requests_total.fetch_add(1, Ordering::Relaxed);
 
     // 1.0 Built-in SOC Web Dashboard
-    if path == "/" || path == "/dashboard" || path == "/soc" {
+    if path == "/" || path == "/dashboard" || path == "/soc" || path == "/soc_dashboard.html" {
         return (
             StatusCode::OK,
             [("Content-Type", "text/html; charset=utf-8")],

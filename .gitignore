@@ -41,10 +41,19 @@ waf_commercial_ad.mp4
 *.tmp
 *.log
 
-# Private Presentation & Motion Graphics (Local only - Excluded from GitHub)
+# Private Presentation, Defense & Media (Local only - Excluded from GitHub)
 showcase/
 rokh_motion_cloudflare.html
 presentation_assets/
+*.pptx
+*.pdf
+*presentation*
+*slide*
+scripts/*presentation*
+scripts/*pptx*
+scripts/*pdf*
+scripts/*report*
+scripts/test*
 
 
 # Operating System & IDE Caches

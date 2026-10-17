@@ -30,12 +30,35 @@ pub struct AppState {
     pub start_time: std::time::Instant,
 }
 
+fn format_headers_json(headers: &HeaderMap) -> String {
+    let mut map = serde_json::Map::new();
+    for (k, v) in headers.iter() {
+        let key = k.as_str().to_lowercase();
+        let val = if let Ok(s) = v.to_str() {
+            if key == "authorization" || key == "cookie" || key == "proxy-authorization" || key == "set-cookie" {
+                if s.len() > 16 {
+                    format!("{}...[REDACTED_PCI_DSS]", &s[..8])
+                } else {
+                    "[REDACTED_PCI_DSS]".to_string()
+                }
+            } else {
+                s.to_string()
+            }
+        } else {
+            "<binary>".to_string()
+        };
+        map.insert(key, serde_json::Value::String(val));
+    }
+    serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string())
+}
+
 pub async fn proxy_handler(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     req: Request,
 ) -> Response {
     let (parts, body) = req.into_parts();
+    let headers_json = format_headers_json(&parts.headers);
 
     // 1. Resolve client IP securely: only trust X-Forwarded-For if connecting peer is loopback/trusted proxy
     let is_trusted_peer = addr.ip().is_loopback();
@@ -224,6 +247,180 @@ pub async fn proxy_handler(
             StatusCode::OK,
             [("Content-Type", "application/json")],
             res.to_string(),
+        )
+            .into_response();
+    }
+
+    // 1.06 Banking Rules Management APIs
+    if path == "/api/rules/custom" {
+        if method == "POST" {
+            let bytes = match to_bytes(body, state.config.max_body_size_bytes).await {
+                Ok(b) => b,
+                Err(_) => Bytes::new(),
+            };
+            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                let name = v.get("name").and_then(|s| s.as_str()).unwrap_or("Custom Rule");
+                let action = v.get("action").and_then(|s| s.as_str()).unwrap_or("BLOCK");
+                let path_pattern = v.get("path_pattern").and_then(|s| s.as_str()).unwrap_or("/*");
+                let ip_cidr = v.get("ip_cidr").and_then(|s| s.as_str()).unwrap_or("*");
+                let ticket_ref = v.get("ticket_ref").and_then(|s| s.as_str()).unwrap_or("MANUAL-RULE");
+
+                match state.logger.add_custom_rule(name, action, path_pattern, ip_cidr, ticket_ref) {
+                    Ok(id) => {
+                        return (
+                            StatusCode::CREATED,
+                            [("Content-Type", "application/json")],
+                            json!({"status": "SUCCESS", "id": id, "message": "Custom rule committed"}).to_string(),
+                        )
+                            .into_response();
+                    }
+                    Err(e) => {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            [("Content-Type", "application/json")],
+                            json!({"error": e.to_string()}).to_string(),
+                        )
+                            .into_response();
+                    }
+                }
+            }
+            return (
+                StatusCode::BAD_REQUEST,
+                [("Content-Type", "application/json")],
+                json!({"error": "Invalid JSON payload"}).to_string(),
+            )
+                .into_response();
+        } else if method == "DELETE" {
+            let id = query_string
+                .as_deref()
+                .and_then(|q| {
+                    q.split('&').find_map(|pair| {
+                        let mut kv = pair.splitn(2, '=');
+                        if kv.next()? == "id" {
+                            kv.next()?.parse::<i64>().ok()
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .unwrap_or(0);
+            let _ = state.logger.delete_custom_rule(id);
+            return (
+                StatusCode::OK,
+                [("Content-Type", "application/json")],
+                json!({"status": "SUCCESS", "deleted_id": id}).to_string(),
+            )
+                .into_response();
+        } else {
+            let rules = state.logger.get_custom_rules();
+            return (
+                StatusCode::OK,
+                [("Content-Type", "application/json")],
+                serde_json::to_string(&rules).unwrap_or_else(|_| "[]".to_string()),
+            )
+                .into_response();
+        }
+    }
+
+    if path == "/api/rules/custom/toggle" {
+        let (id, enabled) = query_string
+            .as_deref()
+            .map(|q| {
+                let mut rid = 0i64;
+                let mut ren = true;
+                for pair in q.split('&') {
+                    let mut kv = pair.splitn(2, '=');
+                    if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
+                        if k == "id" {
+                            rid = v.parse::<i64>().unwrap_or(0);
+                        } else if k == "enabled" {
+                            ren = v == "1" || v.eq_ignore_ascii_case("true");
+                        }
+                    }
+                }
+                (rid, ren)
+            })
+            .unwrap_or((0, true));
+
+        let _ = state.logger.toggle_custom_rule(id, enabled);
+        return (
+            StatusCode::OK,
+            [("Content-Type", "application/json")],
+            json!({"status": "SUCCESS", "id": id, "enabled": enabled}).to_string(),
+        )
+            .into_response();
+    }
+
+    // 1.07 Regulatory Audit & Cryptographic Merkle Verification API
+    if path == "/api/audit/verify" {
+        let res = state.logger.verify_audit_integrity();
+        return (
+            StatusCode::OK,
+            [("Content-Type", "application/json")],
+            res.to_string(),
+        )
+            .into_response();
+    }
+
+    // 1.08 Multi-Format Forensic & SIEM Export API (CSV, CEF, JSON)
+    if path == "/api/export" {
+        let format = query_string
+            .as_deref()
+            .and_then(|q| {
+                q.split('&').find_map(|pair| {
+                    let mut kv = pair.splitn(2, '=');
+                    if kv.next()? == "format" {
+                        Some(kv.next().unwrap_or("csv").to_lowercase())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or_else(|| "csv".to_string());
+
+        if format == "cef" {
+            let content = state.logger.export_logs_cef(5000);
+            return (
+                StatusCode::OK,
+                [
+                    ("Content-Type", "text/plain; charset=utf-8"),
+                    ("Content-Disposition", "attachment; filename=\"rokh_siem_events.cef\""),
+                ],
+                content,
+            )
+                .into_response();
+        } else if format == "json" {
+            let logs = state.logger.get_logs(5000, None);
+            return (
+                StatusCode::OK,
+                [
+                    ("Content-Type", "application/json"),
+                    ("Content-Disposition", "attachment; filename=\"rokh_audit_forensics.json\""),
+                ],
+                serde_json::to_string_pretty(&logs).unwrap_or_else(|_| "[]".to_string()),
+            )
+                .into_response();
+        } else {
+            let content = state.logger.export_logs_csv(5000);
+            return (
+                StatusCode::OK,
+                [
+                    ("Content-Type", "text/csv; charset=utf-8"),
+                    ("Content-Disposition", "attachment; filename=\"rokh_audit_ledger.csv\""),
+                ],
+                content,
+            )
+                .into_response();
+        }
+    }
+
+    // 1.09 Database Maintenance API
+    if path == "/api/db/compact" {
+        let _ = state.logger.checkpoint_database();
+        return (
+            StatusCode::OK,
+            [("Content-Type", "application/json")],
+            json!({"status": "SUCCESS", "message": "SQLite WAL checkpointed and compacted."}).to_string(),
         )
             .into_response();
     }
@@ -441,7 +638,7 @@ pub async fn proxy_handler(
             client_ip: &client_ip,
             method: &method,
             path: &path,
-            headers: "{}",
+            headers: &headers_json,
             query_params: query_string.as_deref(),
             body_snippet: None,
             attack_type: AttackType::RateLimit.as_str(),
@@ -519,6 +716,7 @@ pub async fn proxy_handler(
             &client_ip,
             &method,
             &path,
+            &headers_json,
             query_string.as_deref(),
             None,
             bot_result,
@@ -552,6 +750,59 @@ pub async fn proxy_handler(
         None
     };
 
+    // 4.5 Banking Custom Access Rules & Whitelist/Blacklist Engine
+    let custom_rules = state.logger.get_custom_rules();
+    for rule in &custom_rules {
+        let is_enabled = rule.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+        if !is_enabled {
+            continue;
+        }
+        let pattern = rule.get("path_pattern").and_then(|v| v.as_str()).unwrap_or("*");
+        let action = rule.get("action").and_then(|v| v.as_str()).unwrap_or("BLOCK");
+        let rule_name = rule.get("name").and_then(|v| v.as_str()).unwrap_or("Custom Banking Rule");
+
+        let pattern_matches = if pattern == "*" || pattern == "/*" {
+            true
+        } else if pattern.ends_with("/*") {
+            path.starts_with(&pattern[..pattern.len() - 2])
+        } else {
+            path == pattern
+        };
+
+        if pattern_matches {
+            if action == "BLOCK" {
+                state.metrics_blocked_threats.fetch_add(1, Ordering::Relaxed);
+                state.logger.log_event(LogEntry {
+                    client_ip: &client_ip,
+                    method: &method,
+                    path: &path,
+                    headers: &headers_json,
+                    query_params: query_string.as_deref(),
+                    body_snippet: body_snippet.as_deref(),
+                    attack_type: "CUSTOM_ACL_BLOCK",
+                    rule_id: "ROKH-BANK-ACL-001",
+                    severity: "HIGH",
+                    action_taken: "BLOCKED",
+                    status_code: 403,
+                    blocked_reason: Some(rule_name),
+                });
+                return (
+                    StatusCode::FORBIDDEN,
+                    [("Content-Type", "application/json")],
+                    json!({
+                        "waf": "ROKH WAF v1.0",
+                        "status": "BLOCKED",
+                        "rule": rule_name,
+                        "action": "CUSTOM_ACL_BLOCK",
+                        "message": "Access Denied: Blocked by custom enterprise banking access rule."
+                    }).to_string(),
+                ).into_response();
+            } else if action == "ALLOW" {
+                return forward_to_backend(&state, parts.method, &path, query_string.as_deref(), parts.headers, body_bytes, &client_ip).await;
+            }
+        }
+    }
+
     // 5. Deep Inspection with Deobfuscation
     // A) Inspect Path
     let norm_path = Deobfuscator::normalize(&path);
@@ -562,6 +813,7 @@ pub async fn proxy_handler(
             &client_ip,
             &method,
             &path,
+            &headers_json,
             query_string.as_deref(),
             body_snippet.as_deref(),
             path_result,
@@ -586,6 +838,7 @@ pub async fn proxy_handler(
                 &client_ip,
                 &method,
                 &path,
+                &headers_json,
                 query_string.as_deref(),
                 body_snippet.as_deref(),
                 query_result,
@@ -604,6 +857,7 @@ pub async fn proxy_handler(
                 &client_ip,
                 &method,
                 &path,
+                &headers_json,
                 query_string.as_deref(),
                 body_snippet.as_deref(),
                 body_result,
@@ -625,6 +879,7 @@ pub async fn proxy_handler(
                     &client_ip,
                     &method,
                     &path,
+                    &headers_json,
                     query_string.as_deref(),
                     Some(&trigger_desc),
                     header_res,
@@ -675,6 +930,7 @@ pub async fn proxy_handler(
                 &client_ip,
                 &method,
                 &path,
+                &headers_json,
                 query_string.as_deref(),
                 body_snippet.as_deref(),
                 detection,
@@ -698,7 +954,7 @@ pub async fn proxy_handler(
                 client_ip: &client_ip,
                 method: &method,
                 path: &path,
-                headers: "{}",
+                headers: &headers_json,
                 query_params: query_string.as_deref(),
                 body_snippet: None,
                 attack_type: AttackType::RateLimit.as_str(),
@@ -762,7 +1018,7 @@ pub async fn proxy_handler(
         client_ip: &client_ip,
         method: &method,
         path: &path,
-        headers: "{}",
+        headers: &headers_json,
         query_params: query_string.as_deref(),
         body_snippet: body_snippet.as_deref(),
         attack_type: AttackType::Clean.as_str(),
@@ -829,7 +1085,8 @@ async fn handle_threat_response(
     client_ip: &str,
     method: &str,
     path: &str,
-    query_params: Option<&str>,
+    headers_str: &str,
+    query_string: Option<&str>,
     body_snippet: Option<&str>,
     detection: DetectionResult,
     is_html_client: bool,
@@ -851,8 +1108,8 @@ async fn handle_threat_response(
         client_ip,
         method,
         path,
-        headers: "{}",
-        query_params,
+        headers: headers_str,
+        query_params: query_string,
         body_snippet,
         attack_type: detection.attack_type.as_str(),
         rule_id: detection.rule_id,

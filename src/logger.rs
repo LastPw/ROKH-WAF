@@ -119,6 +119,17 @@ impl WafLogger {
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_country ON waf_logs(country_code)", []);
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_asn ON waf_logs(asn)", []);
 
+        // Migrations for enterprise waf_custom_rules
+        let _ = conn.execute("ALTER TABLE waf_custom_rules ADD COLUMN country_code TEXT DEFAULT '*'", []);
+        let _ = conn.execute("ALTER TABLE waf_custom_rules ADD COLUMN asn INTEGER DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE waf_custom_rules ADD COLUMN ip_type TEXT DEFAULT '*'", []);
+        let _ = conn.execute("ALTER TABLE waf_custom_rules ADD COLUMN http_method TEXT DEFAULT '*'", []);
+        let _ = conn.execute("ALTER TABLE waf_custom_rules ADD COLUMN header_name TEXT DEFAULT ''", []);
+        let _ = conn.execute("ALTER TABLE waf_custom_rules ADD COLUMN header_value TEXT DEFAULT ''", []);
+        let _ = conn.execute("ALTER TABLE waf_custom_rules ADD COLUMN hits INTEGER DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE waf_custom_rules ADD COLUMN priority INTEGER DEFAULT 100", []);
+        let _ = conn.execute("ALTER TABLE waf_custom_rules ADD COLUMN description TEXT DEFAULT ''", []);
+
         // Seed initial enterprise banking rules if table is newly initialized
         let count_rules: i64 = conn.query_row("SELECT COUNT(*) FROM waf_custom_rules", [], |r| r.get(0)).unwrap_or(0);
         if count_rules == 0 {
@@ -557,7 +568,7 @@ impl WafLogger {
         Ok(())
     }
 
-    /// Returns custom banking firewall access rules
+    /// Returns custom banking firewall access rules with complete multi-field match criteria
     pub fn get_custom_rules(&self) -> Vec<serde_json::Value> {
         let conn = match Connection::open(&self.db_path) {
             Ok(c) => c,
@@ -565,7 +576,13 @@ impl WafLogger {
         };
 
         let mut rules = Vec::new();
-        if let Ok(mut stmt) = conn.prepare("SELECT id, name, action, path_pattern, ip_cidr, enabled, ticket_ref, created_at FROM waf_custom_rules ORDER BY id DESC") {
+        let query = "SELECT id, name, action, path_pattern, ip_cidr, enabled, ticket_ref, created_at, 
+                     COALESCE(country_code, '*'), COALESCE(asn, 0), COALESCE(ip_type, '*'), 
+                     COALESCE(http_method, '*'), COALESCE(header_name, ''), COALESCE(header_value, ''), 
+                     COALESCE(hits, 0), COALESCE(priority, 100), COALESCE(description, '') 
+                     FROM waf_custom_rules ORDER BY priority ASC, id DESC";
+
+        if let Ok(mut stmt) = conn.prepare(query) {
             if let Ok(rows) = stmt.query_map([], |r| {
                 Ok(serde_json::json!({
                     "id": r.get::<_, i64>(0)?,
@@ -576,6 +593,15 @@ impl WafLogger {
                     "enabled": r.get::<_, i64>(5)? == 1,
                     "ticket_ref": r.get::<_, Option<String>>(6)?.unwrap_or_default(),
                     "created_at": r.get::<_, String>(7)?,
+                    "country_code": r.get::<_, String>(8)?,
+                    "asn": r.get::<_, u32>(9)?,
+                    "ip_type": r.get::<_, String>(10)?,
+                    "http_method": r.get::<_, String>(11)?,
+                    "header_name": r.get::<_, String>(12)?,
+                    "header_value": r.get::<_, String>(13)?,
+                    "hits": r.get::<_, u64>(14)?,
+                    "priority": r.get::<_, i64>(15)?,
+                    "description": r.get::<_, String>(16)?,
                 }))
             }) {
                 for rule in rows.flatten() {
@@ -586,15 +612,85 @@ impl WafLogger {
         rules
     }
 
-    /// Creates a new banking custom rule
+    /// Creates a new banking custom rule (basic overload)
+    #[allow(dead_code)]
     pub fn add_custom_rule(&self, name: &str, action: &str, path_pattern: &str, ip_cidr: &str, ticket_ref: &str) -> Result<i64, rusqlite::Error> {
+        self.add_advanced_rule(
+            name,
+            action,
+            path_pattern,
+            ip_cidr,
+            "*",
+            0,
+            "*",
+            "*",
+            "",
+            "",
+            100,
+            "",
+            ticket_ref,
+        )
+    }
+
+    /// Creates an advanced enterprise firewall rule with full Layer 7 and perimeter criteria
+    pub fn add_advanced_rule(
+        &self,
+        name: &str,
+        action: &str,
+        path_pattern: &str,
+        ip_cidr: &str,
+        country_code: &str,
+        asn: u32,
+        ip_type: &str,
+        http_method: &str,
+        header_name: &str,
+        header_value: &str,
+        priority: i64,
+        description: &str,
+        ticket_ref: &str,
+    ) -> Result<i64, rusqlite::Error> {
         let conn = Connection::open(&self.db_path)?;
         let now = Utc::now().to_rfc3339();
         conn.execute(
-            "INSERT INTO waf_custom_rules (name, action, path_pattern, ip_cidr, enabled, ticket_ref, created_at) VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6)",
-            params![name, action, path_pattern, ip_cidr, ticket_ref, now],
+            "INSERT INTO waf_custom_rules (
+                name, action, path_pattern, ip_cidr, country_code, asn, ip_type, http_method,
+                header_name, header_value, hits, priority, description, enabled, ticket_ref, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, ?12, 1, ?13, ?14)",
+            params![
+                name, action, path_pattern, ip_cidr, country_code, asn, ip_type, http_method,
+                header_name, header_value, priority, description, ticket_ref, now
+            ],
         )?;
         Ok(conn.last_insert_rowid())
+    }
+
+    /// Increments hit counter for a matching custom rule
+    pub fn increment_rule_hit(&self, id: i64) {
+        if let Ok(conn) = Connection::open(&self.db_path) {
+            let _ = conn.execute("UPDATE waf_custom_rules SET hits = hits + 1 WHERE id = ?1", params![id]);
+        }
+    }
+
+    /// Convenience: Creates a high-priority country blocking rule
+    pub fn block_country(&self, country: &str) -> Result<i64, rusqlite::Error> {
+        let clean = country.trim().to_uppercase();
+        let name = format!("Block Country {}", clean);
+        let desc = format!("Autonomous Geo-Defense block rule for sovereign code {}", clean);
+        self.add_advanced_rule(
+            &name,
+            "BLOCK",
+            "/*",
+            "*",
+            &clean,
+            0,
+            "*",
+            "*",
+            "",
+            "",
+            10,
+            &desc,
+            "GEO-MAP-ACTION",
+        )
     }
 
     /// Toggles active status of custom rule

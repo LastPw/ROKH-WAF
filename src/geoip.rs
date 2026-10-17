@@ -37,7 +37,18 @@ impl GeoResolver {
     pub fn resolve(client_ip: &str, headers: &HeaderMap) -> GeoLocation {
         let ip_clean = client_ip.trim();
 
-        // 1. Loopback and Private RFC-1918 addresses
+        // 1. Check for Edge Proxy GeoIP Headers (e.g. Cloudflare CF-IPCountry, CDN edge proxies)
+        let header_country = headers.get("cf-ipcountry")
+            .or_else(|| headers.get("x-country-code"))
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.trim().to_uppercase())
+            .filter(|s| s.len() == 2 && s != "XX" && s != "T1");
+
+        if let Some(code) = header_country {
+            return Self::build_from_code(&code, false);
+        }
+
+        // 2. Loopback and Private RFC-1918 addresses
         if ip_clean == "127.0.0.1" || ip_clean == "::1" || ip_clean == "localhost" {
             return GeoLocation {
                 country_code: "LOCAL".to_string(),
@@ -74,21 +85,13 @@ impl GeoResolver {
                 };
             }
 
-            // 2. Check for Edge Proxy GeoIP Headers (e.g. Cloudflare CF-IPCountry)
-            let header_country = headers.get("cf-ipcountry")
-                .or_else(|| headers.get("x-country-code"))
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.trim().to_uppercase())
-                .filter(|s| s.len() == 2 && s != "XX" && s != "T1");
-
             // 3. Fast In-Memory Binary Search over Global Range Trie
             if let Some(entry) = Self::lookup_ipv4_range(ip_u32) {
-                let code = header_country.as_deref().unwrap_or(entry.country_code);
-                return Self::build_from_entry(code, &entry);
+                return Self::build_from_entry(entry.country_code, &entry);
             }
 
             // 4. Fallback deterministic subnet distribution for unindexed public IPs
-            let fallback_code = header_country.as_deref().unwrap_or_else(|| Self::hash_to_country(ip_u32));
+            let fallback_code = Self::hash_to_country(ip_u32);
             return Self::build_from_code(fallback_code, false);
         }
 

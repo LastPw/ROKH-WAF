@@ -329,7 +329,7 @@ impl AntiDdosEngine {
     }
 
     /// Renders Cloudflare-style browser Proof-of-Work challenge page
-    fn render_pow_challenge(&self, client_ip: &str, uri: &Uri) -> Response {
+    pub fn render_pow_challenge(&self, client_ip: &str, uri: &Uri) -> Response {
         let now_unix = current_unix_timestamp();
         let rand_val = rand_u64();
         let nonce = self.create_challenge_nonce(client_ip, now_unix, rand_val);

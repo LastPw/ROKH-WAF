@@ -525,14 +525,36 @@ pub async fn proxy_handler(
                 let action = v.get("action").and_then(|s| s.as_str()).unwrap_or("BLOCK");
                 let path_pattern = v.get("path_pattern").and_then(|s| s.as_str()).unwrap_or("/*");
                 let ip_cidr = v.get("ip_cidr").and_then(|s| s.as_str()).unwrap_or("*");
-                let ticket_ref = v.get("ticket_ref").and_then(|s| s.as_str()).unwrap_or("MANUAL-RULE");
+                let country_code = v.get("country_code").and_then(|s| s.as_str()).unwrap_or("*");
+                let asn = v.get("asn").and_then(|w| w.as_u64()).unwrap_or(0) as u32;
+                let ip_type = v.get("ip_type").and_then(|s| s.as_str()).unwrap_or("*");
+                let http_method = v.get("http_method").and_then(|s| s.as_str()).unwrap_or("*");
+                let header_name = v.get("header_name").and_then(|s| s.as_str()).unwrap_or("");
+                let header_value = v.get("header_value").and_then(|s| s.as_str()).unwrap_or("");
+                let priority = v.get("priority").and_then(|p| p.as_i64()).unwrap_or(100);
+                let description = v.get("description").and_then(|s| s.as_str()).unwrap_or("");
+                let ticket_ref = v.get("ticket_ref").and_then(|s| s.as_str()).unwrap_or("RULE-OPS");
 
-                match state.logger.add_custom_rule(name, action, path_pattern, ip_cidr, ticket_ref) {
+                match state.logger.add_advanced_rule(
+                    name,
+                    action,
+                    path_pattern,
+                    ip_cidr,
+                    country_code,
+                    asn,
+                    ip_type,
+                    http_method,
+                    header_name,
+                    header_value,
+                    priority,
+                    description,
+                    ticket_ref,
+                ) {
                     Ok(id) => {
                         return (
                             StatusCode::CREATED,
                             [("Content-Type", "application/json")],
-                            json!({"status": "SUCCESS", "id": id, "message": "Custom rule committed"}).to_string(),
+                            json!({"status": "SUCCESS", "id": id, "message": "Custom firewall rule committed"}).to_string(),
                         )
                             .into_response();
                     }
@@ -611,6 +633,40 @@ pub async fn proxy_handler(
             json!({"status": "SUCCESS", "id": id, "enabled": enabled}).to_string(),
         )
             .into_response();
+    }
+
+    if path == "/api/rules/custom/country-block" && method == "POST" {
+        let bytes = match to_bytes(body, state.config.max_body_size_bytes).await {
+            Ok(b) => b,
+            Err(_) => Bytes::new(),
+        };
+        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+            let country = v.get("country").and_then(|s| s.as_str()).unwrap_or("").trim().to_uppercase();
+            if !country.is_empty() {
+                match state.logger.block_country(&country) {
+                    Ok(id) => {
+                        return (
+                            StatusCode::CREATED,
+                            [("Content-Type", "application/json")],
+                            json!({
+                                "status": "SUCCESS",
+                                "id": id,
+                                "country": country,
+                                "message": format!("Country {} added to active firewall block list", country)
+                            }).to_string(),
+                        ).into_response();
+                    }
+                    Err(e) => {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            [("Content-Type", "application/json")],
+                            json!({"error": e.to_string()}).to_string(),
+                        ).into_response();
+                    }
+                }
+            }
+        }
+        return (StatusCode::BAD_REQUEST, [("Content-Type", "application/json")], json!({"error": "Country code required"}).to_string()).into_response();
     }
 
     // 1.07 Regulatory Audit & Cryptographic Merkle Verification API
@@ -1254,66 +1310,140 @@ pub async fn proxy_handler(
         None
     };
 
-    // 4.5 Banking Custom Access Rules & Whitelist/Blacklist Engine
+    // 4.5 Enterprise Custom Firewall & Geo-Defense Rules Engine
     let custom_rules = state.logger.get_custom_rules();
     for rule in &custom_rules {
         let is_enabled = rule.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
         if !is_enabled {
             continue;
         }
+        let rule_id = rule.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
         let pattern = rule.get("path_pattern").and_then(|v| v.as_str()).unwrap_or("*");
         let action = rule.get("action").and_then(|v| v.as_str()).unwrap_or("BLOCK");
-        let rule_name = rule.get("name").and_then(|v| v.as_str()).unwrap_or("Custom Banking Rule");
+        let rule_name = rule.get("name").and_then(|v| v.as_str()).unwrap_or("Custom Firewall Rule");
+        let country_pattern = rule.get("country_code").and_then(|v| v.as_str()).unwrap_or("*");
+        let ip_pattern = rule.get("ip_cidr").and_then(|v| v.as_str()).unwrap_or("*");
+        let asn_target = rule.get("asn").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let ip_type_target = rule.get("ip_type").and_then(|v| v.as_str()).unwrap_or("*");
+        let method_target = rule.get("http_method").and_then(|v| v.as_str()).unwrap_or("*");
+        let header_name = rule.get("header_name").and_then(|v| v.as_str()).unwrap_or("");
+        let header_val = rule.get("header_value").and_then(|v| v.as_str()).unwrap_or("");
 
+        // 1. Path Pattern Match
         let pattern_matches = if pattern == "*" || pattern == "/*" {
             true
         } else if pattern.ends_with("/*") {
             path.starts_with(&pattern[..pattern.len() - 2])
+        } else if pattern.starts_with("*.") {
+            path.ends_with(&pattern[1..])
         } else {
             path == pattern
         };
+        if !pattern_matches {
+            continue;
+        }
 
-        if pattern_matches {
-            let ip_pattern = rule.get("ip_cidr").and_then(|v| v.as_str()).unwrap_or("*");
-            if !ip_matches_cidr(&client_ip, ip_pattern) {
+        // 2. IP / CIDR Match
+        if !ip_matches_cidr(&client_ip, ip_pattern) {
+            continue;
+        }
+
+        // 3. Country Match (Supports single country like US or comma-separated list US,CN,RU or *)
+        if country_pattern != "*" && !country_pattern.is_empty() {
+            let matched_country = country_pattern.split(',').any(|c| c.trim().eq_ignore_ascii_case(&geo_loc.country_code));
+            if !matched_country {
                 continue;
             }
+        }
 
-            if action == "BLOCK" {
-                state.metrics_blocked_threats.fetch_add(1, Ordering::Relaxed);
-                state.logger.log_event(LogEntry {
-                    client_ip: &client_ip,
-                    method: &method,
-                    path: &path,
-                    headers: &headers_json,
-                    query_params: query_string.as_deref(),
-                    body_snippet: body_snippet.as_deref(),
-                    attack_type: "CUSTOM_ACL_BLOCK",
-                    rule_id: "ROKH-BANK-ACL-001",
-                    severity: "HIGH",
-                    action_taken: "BLOCKED",
-                    status_code: 403,
-                    blocked_reason: Some(rule_name),
-                    country_code: &geo_loc.country_code,
-                    country_name: &geo_loc.country_name,
-                    asn: geo_loc.asn,
-                    as_org: &geo_loc.as_org,
-                    ip_type: &geo_loc.ip_type,
-                });
-                return (
-                    StatusCode::FORBIDDEN,
-                    [("Content-Type", "application/json")],
-                    json!({
-                        "waf": "ROKH WAF v1.0",
-                        "status": "BLOCKED",
-                        "rule": rule_name,
-                        "action": "CUSTOM_ACL_BLOCK",
-                        "message": "Access Denied: Blocked by custom enterprise banking access rule."
-                    }).to_string(),
-                ).into_response();
-            } else if action == "ALLOW" {
-                return forward_to_backend(&state, parts.method, &path, query_string.as_deref(), parts.headers, body_bytes, &client_ip).await;
+        // 4. ASN Match
+        if asn_target > 0 && geo_loc.asn != asn_target {
+            continue;
+        }
+
+        // 5. IP Classification Type Match (Datacenter, Tor, VPN, Consumer)
+        if ip_type_target != "*" && !ip_type_target.is_empty() {
+            if !geo_loc.ip_type.eq_ignore_ascii_case(ip_type_target) {
+                continue;
             }
+        }
+
+        // 6. HTTP Method Match
+        if method_target != "*" && !method_target.is_empty() {
+            if !method.eq_ignore_ascii_case(method_target) {
+                continue;
+            }
+        }
+
+        // 7. Custom HTTP Header Match
+        if !header_name.is_empty() {
+            let has_header = parts.headers.get(header_name).and_then(|v| v.to_str().ok());
+            match has_header {
+                Some(val) => {
+                    if !header_val.is_empty() && !val.contains(header_val) {
+                        continue;
+                    }
+                }
+                None => continue,
+            }
+        }
+
+        // All configured criteria matched! Increment hit counter
+        state.logger.increment_rule_hit(rule_id);
+
+        if action == "BLOCK" {
+            state.metrics_blocked_threats.fetch_add(1, Ordering::Relaxed);
+            let incident_id = format!("RULE-DROP-{}", &chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+            state.logger.log_event(LogEntry {
+                client_ip: &client_ip,
+                method: &method,
+                path: &path,
+                headers: &headers_json,
+                query_params: query_string.as_deref(),
+                body_snippet: body_snippet.as_deref(),
+                attack_type: "CUSTOM_FIREWALL_RULE",
+                rule_id: &format!("ROKH-RULE-{:04}", rule_id),
+                severity: "HIGH",
+                action_taken: "BLOCKED",
+                status_code: 403,
+                blocked_reason: Some(rule_name),
+                country_code: &geo_loc.country_code,
+                country_name: &geo_loc.country_name,
+                asn: geo_loc.asn,
+                as_org: &geo_loc.as_org,
+                ip_type: &geo_loc.ip_type,
+            });
+
+            if is_html_client {
+                let html_body = crate::pages::render_security_block_page(
+                    &incident_id,
+                    &client_ip,
+                    "CUSTOM_FIREWALL_RULE",
+                    &format!("ROKH-RULE-{:04}", rule_id),
+                    "HIGH",
+                    rule_name,
+                    403,
+                    "درخواست شما بر اساس قوانین فایروال سازمان مسدود گردید.",
+                );
+                return (StatusCode::FORBIDDEN, [("Content-Type", "text/html; charset=utf-8")], html_body).into_response();
+            }
+
+            return (
+                StatusCode::FORBIDDEN,
+                [("Content-Type", "application/json")],
+                json!({
+                    "waf": "ROKH WAF v1.0",
+                    "status": "BLOCKED",
+                    "rule_id": format!("ROKH-RULE-{:04}", rule_id),
+                    "rule": rule_name,
+                    "action": "CUSTOM_FIREWALL_RULE",
+                    "message": format!("Access Denied by Firewall Policy: {}", rule_name)
+                }).to_string(),
+            ).into_response();
+        } else if action == "CHALLENGE" {
+            return state.antiddos.render_pow_challenge(&client_ip, &parts.uri);
+        } else if action == "ALLOW" {
+            return forward_to_backend(&state, parts.method, &path, query_string.as_deref(), parts.headers, body_bytes, &client_ip).await;
         }
     }
 

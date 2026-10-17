@@ -8,6 +8,8 @@ pub enum AttackType {
     CommandInjection,
     BadBot,
     RateLimit,
+    PromptInjection,
+    ZeroDayAnomaly,
     Clean,
 }
 
@@ -20,6 +22,8 @@ impl AttackType {
             AttackType::CommandInjection => "COMMAND_INJECTION",
             AttackType::BadBot => "BAD_BOT",
             AttackType::RateLimit => "RATE_LIMIT",
+            AttackType::PromptInjection => "PROMPT_INJECTION",
+            AttackType::ZeroDayAnomaly => "ZERO_DAY_ANOMALY",
             AttackType::Clean => "CLEAN",
         }
     }

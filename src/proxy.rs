@@ -1,3 +1,4 @@
+use crate::ai::NeuralBrain;
 use crate::antiddos::{AntiDdosEngine, DdosVerdict};
 use crate::config::{WafConfig, WafMode};
 use crate::deobfuscator::Deobfuscator;
@@ -10,6 +11,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 pub struct AppState {
@@ -18,6 +20,12 @@ pub struct AppState {
     pub antiddos: AntiDdosEngine,
     pub logger: WafLogger,
     pub http_client: reqwest::Client,
+    pub ai: Arc<NeuralBrain>,
+    pub metrics_requests_total: AtomicU64,
+    pub metrics_blocked_threats: AtomicU64,
+    pub metrics_ai_inspections: AtomicU64,
+    pub metrics_ai_anomalies: AtomicU64,
+    pub start_time: std::time::Instant,
 }
 
 pub async fn proxy_handler(
@@ -50,6 +58,115 @@ pub async fn proxy_handler(
         .and_then(|v| v.to_str().ok())
         .map(|a| a.contains("text/html"))
         .unwrap_or(false);
+
+    state.metrics_requests_total.fetch_add(1, Ordering::Relaxed);
+
+    // 1.1 Prometheus Metrics Endpoint
+    if path == "/metrics" || path == "/__rokh/metrics" {
+        let reqs = state.metrics_requests_total.load(Ordering::Relaxed);
+        let blocked = state.metrics_blocked_threats.load(Ordering::Relaxed);
+        let ai_inspections = state.metrics_ai_inspections.load(Ordering::Relaxed);
+        let ai_anomalies = state.metrics_ai_anomalies.load(Ordering::Relaxed);
+        let uptime = state.start_time.elapsed().as_secs();
+        let ddos_metrics = state.antiddos.get_metrics();
+        let jailed = ddos_metrics.get("jailed_ips_count").and_then(|v| v.as_u64()).unwrap_or(0);
+        let under_attack = if ddos_metrics.get("under_attack_mode").and_then(|v| v.as_bool()).unwrap_or(false) { 1 } else { 0 };
+
+        let metrics_text = format!(
+            "# HELP rokh_http_requests_total Total number of HTTP requests processed by ROKH WAF\n\
+             # TYPE rokh_http_requests_total counter\n\
+             rokh_http_requests_total {}\n\n\
+             # HELP rokh_threats_blocked_total Total threats blocked across signature, AI, and DDoS defenses\n\
+             # TYPE rokh_threats_blocked_total counter\n\
+             rokh_threats_blocked_total {}\n\n\
+             # HELP rokh_ai_inspections_total Total zero-day AI heuristic and neural inspections conducted\n\
+             # TYPE rokh_ai_inspections_total counter\n\
+             rokh_ai_inspections_total {}\n\n\
+             # HELP rokh_ai_anomalies_detected_total Total zero-day anomalies and prompt injections caught by AI\n\
+             # TYPE rokh_ai_anomalies_detected_total counter\n\
+             rokh_ai_anomalies_detected_total {}\n\n\
+             # HELP rokh_uptime_seconds Total runtime in seconds\n\
+             # TYPE rokh_uptime_seconds gauge\n\
+             rokh_uptime_seconds {}\n\n\
+             # HELP rokh_antiddos_jailed_ips Number of currently jailed attacker IPs\n\
+             # TYPE rokh_antiddos_jailed_ips gauge\n\
+             rokh_antiddos_jailed_ips {}\n\n\
+             # HELP rokh_antiddos_under_attack_mode Status of emergency under attack mitigation mode\n\
+             # TYPE rokh_antiddos_under_attack_mode gauge\n\
+             rokh_antiddos_under_attack_mode {}\n",
+            reqs, blocked, ai_inspections, ai_anomalies, uptime, jailed, under_attack
+        );
+        return (
+            StatusCode::OK,
+            [("Content-Type", "text/plain; version=0.0.4; charset=utf-8")],
+            metrics_text,
+        )
+            .into_response();
+    }
+
+    // 1.2 Native AI Predict Endpoint (Direct In-Memory Neural Inference)
+    if path == "/__rokh_ai/predict" || path == "/__rokh/ai" {
+        let payload = if method == "POST" {
+            let bytes = match to_bytes(body, state.config.max_body_size_bytes).await {
+                Ok(b) => b,
+                Err(_) => Bytes::new(),
+            };
+            let raw_str = String::from_utf8_lossy(&bytes).to_string();
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw_str) {
+                v.get("payload")
+                    .or_else(|| v.get("text"))
+                    .or_else(|| v.get("query"))
+                    .and_then(|s| s.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or(raw_str)
+            } else {
+                raw_str
+            }
+        } else {
+            query_string
+                .as_deref()
+                .and_then(|q| {
+                    q.split('&').find_map(|pair| {
+                        let mut kv = pair.splitn(2, '=');
+                        let k = kv.next()?;
+                        if k == "payload" || k == "q" || k == "text" {
+                            let val = kv.next().unwrap_or("").replace('+', " ");
+                            Some(urlencoding::decode(&val).unwrap_or(std::borrow::Cow::Borrowed(&val)).to_string())
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .unwrap_or_else(|| query_string.clone().unwrap_or_default())
+        };
+
+        state.metrics_ai_inspections.fetch_add(1, Ordering::Relaxed);
+        let pred = state.ai.predict(&payload);
+        if pred.is_malicious {
+            state.metrics_ai_anomalies.fetch_add(1, Ordering::Relaxed);
+        }
+
+        let res = json!({
+            "status": "SUCCESS",
+            "waf": "ROKH WAF v1.0",
+            "engine": "ROKH Native Rust NeuralBrain (Embedded 556-Feature Logistic + Shannon Entropy)",
+            "payload": payload,
+            "verdict": pred.verdict,
+            "is_malicious": pred.is_malicious,
+            "threat_probability": pred.threat_probability,
+            "anomaly_score": pred.anomaly_score,
+            "entropy": pred.entropy,
+            "detected_intent": pred.detected_intent,
+            "inference_latency_micros": pred.inference_micros
+        });
+
+        return (
+            StatusCode::OK,
+            [("Content-Type", "application/json")],
+            res.to_string(),
+        )
+            .into_response();
+    }
 
     // 1.5 DDoS Management Endpoints (Restricted strictly to Authenticated Internal SOC Communication)
     if path.starts_with("/__aegis_ddos/") || path.starts_with("/__rokh_ddos/") {
@@ -152,6 +269,7 @@ pub async fn proxy_handler(
 
     // 1.8 Front-Door Fast-Path: Instant drop for Jailed DDoS Flooders in < 0.02ms
     if let Some(remaining_secs) = state.antiddos.is_ip_jailed(&client_ip) {
+        state.metrics_blocked_threats.fetch_add(1, Ordering::Relaxed);
         state.logger.log_event(LogEntry {
             client_ip: &client_ip,
             method: &method,
@@ -286,9 +404,15 @@ pub async fn proxy_handler(
     }
 
     // B) Inspect Query String
-    if let Some(ref q) = query_string {
-        let norm_query = Deobfuscator::normalize(q);
-        let query_result = state.rules.inspect(&norm_query);
+    let norm_query = query_string.as_ref().map(|q| Deobfuscator::normalize(q));
+    let norm_body = if !body_str.is_empty() {
+        Some(Deobfuscator::normalize(&body_str))
+    } else {
+        None
+    };
+
+    if let Some(ref nq) = norm_query {
+        let query_result = state.rules.inspect(nq);
         if query_result.is_threat {
             return handle_threat_response(
                 &state,
@@ -305,9 +429,8 @@ pub async fn proxy_handler(
     }
 
     // C) Inspect Body
-    if !body_str.is_empty() {
-        let norm_body = Deobfuscator::normalize(&body_str);
-        let body_result = state.rules.inspect(&norm_body);
+    if let Some(ref nb) = norm_body {
+        let body_result = state.rules.inspect(nb);
         if body_result.is_threat {
             return handle_threat_response(
                 &state,
@@ -345,6 +468,55 @@ pub async fn proxy_handler(
         }
     }
 
+    // 5.5 AI Zero-Day & Semantic Anomaly Inspection (< 15µs in-memory neural inference)
+    let inspect_candidates = [
+        norm_query.as_deref().filter(|q| !q.is_empty()),
+        norm_body.as_deref().filter(|b| !b.is_empty()),
+    ];
+
+    for candidate in inspect_candidates.into_iter().flatten() {
+        state.metrics_ai_inspections.fetch_add(1, Ordering::Relaxed);
+        let ai_pred = state.ai.predict(candidate);
+        if ai_pred.is_malicious {
+            state.metrics_ai_anomalies.fetch_add(1, Ordering::Relaxed);
+            let attack_type = match ai_pred.detected_intent {
+                "PROMPT_INJECTION" => AttackType::PromptInjection,
+                _ => AttackType::ZeroDayAnomaly,
+            };
+            let rule_id = match ai_pred.detected_intent {
+                "PROMPT_INJECTION" => "AI-PROMPT-001",
+                "PROTOTYPE_POLLUTION" => "AI-PROTO-002",
+                "SSRF_METADATA" => "AI-SSRF-003",
+                "LOG4SHELL_SSTI" => "AI-SSTI-004",
+                _ => "AI-ANOMALY-005",
+            };
+            let pattern_desc = format!(
+                "AI Neural Anomaly: intent={}, confidence={:.1}%, entropy={:.2}",
+                ai_pred.detected_intent,
+                ai_pred.threat_probability * 100.0,
+                ai_pred.entropy
+            );
+            let detection = DetectionResult {
+                is_threat: true,
+                attack_type,
+                rule_id,
+                severity: if ai_pred.threat_probability >= 0.90 { "CRITICAL" } else { "HIGH" },
+                matched_pattern: pattern_desc,
+            };
+            return handle_threat_response(
+                &state,
+                &client_ip,
+                &method,
+                &path,
+                query_string.as_deref(),
+                body_snippet.as_deref(),
+                detection,
+                is_html_client,
+            )
+            .await;
+        }
+    }
+
     // 6. Anti-DDoS Traffic Policy (Challenges / Rate-Limit / Dynamic Jail)
     match state.antiddos.check_request(&client_ip, &parts.headers, &parts.uri) {
         DdosVerdict::Challenge(challenge_res) => {
@@ -354,6 +526,7 @@ pub async fn proxy_handler(
             return verify_res;
         }
         DdosVerdict::Jailed { remaining_secs } => {
+            state.metrics_blocked_threats.fetch_add(1, Ordering::Relaxed);
             state.logger.log_event(LogEntry {
                 client_ip: &client_ip,
                 method: &method,
@@ -450,7 +623,10 @@ async fn handle_threat_response(
     let current_mode = WafMode::from(mode_str.as_str());
 
     let (action_taken, status_code) = match current_mode {
-        WafMode::Prevention => ("BLOCKED", 403),
+        WafMode::Prevention => {
+            state.metrics_blocked_threats.fetch_add(1, Ordering::Relaxed);
+            ("BLOCKED", 403)
+        }
         WafMode::Detection => ("FLAGGED", 200),
     };
 

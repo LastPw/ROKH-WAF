@@ -1,3 +1,4 @@
+mod ai;
 mod antiddos;
 mod config;
 mod deobfuscator;
@@ -7,6 +8,7 @@ mod proxy;
 mod ratelimit;
 mod rules;
 
+use ai::NeuralBrain;
 use config::WafConfig;
 use logger::WafLogger;
 use proxy::{proxy_handler, AppState};
@@ -15,6 +17,7 @@ use rules::RuleEngine;
 use axum::routing::any;
 use axum::Router;
 use std::net::SocketAddr;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -39,10 +42,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(" [+] Active Security Mode    : {:?}", config.mode);
     println!(" [+] Rate Limiter Threshold  : {} req/min per IP", config.rate_limit_rpm);
     println!(" [+] Telemetry Database     : {}", db_path);
+    println!(" [+] AI Neural Engine        : In-Memory Native Rust Loaded (< 15µs)");
     println!("------------------------------------------------------------");
 
     let logger = WafLogger::new(&db_path)?;
     let rules = RuleEngine::new();
+    let ai = Arc::new(NeuralBrain::new());
     let antiddos = antiddos::AntiDdosEngine::new(antiddos::DdosConfig {
         normal_rpm_limit: config.rate_limit_rpm,
         burst_rpm_limit: config.rate_limit_rpm * 2,
@@ -62,6 +67,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         antiddos,
         logger,
         http_client,
+        ai,
+        metrics_requests_total: AtomicU64::new(0),
+        metrics_blocked_threats: AtomicU64::new(0),
+        metrics_ai_inspections: AtomicU64::new(0),
+        metrics_ai_anomalies: AtomicU64::new(0),
+        start_time: std::time::Instant::now(),
     });
 
     let app = Router::new()

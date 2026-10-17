@@ -20,7 +20,8 @@ impl Deobfuscator {
             }
         }
 
-        // 2. Remove null bytes and non-printable control characters
+        // 2. Decode form-urlencoded '+' as space, and remove null bytes
+        result = result.replace('+', " ");
         result = result.replace('\0', "");
 
         // 3. Normalize common directory separators

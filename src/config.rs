@@ -114,6 +114,12 @@ impl WafConfig {
                         i += 1;
                     }
                 }
+                "--db" => {
+                    if i + 1 < args.len() {
+                        cfg.db_path = args[i + 1].trim().to_string();
+                        i += 1;
+                    }
+                }
                 "--help" | "-h" => {
                     println!("============================================================");
                     println!(" [ROKH WAF] Command-Line Options Manual");

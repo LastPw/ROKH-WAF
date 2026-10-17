@@ -15,6 +15,9 @@
             background-color: #060911 !important;
             font-family: var(--font-sans) !important;
         }
+        .leaflet-tile {
+            filter: brightness(0.85) contrast(1.15) !important;
+        }
         .leaflet-bar a {
             background-color: var(--bg-card) !important;
             color: #fff !important;
@@ -1179,12 +1182,12 @@
 
             <!-- Main World Map & Telemetry Split Grid -->
             <div class="geo-split-grid">
-                <!-- Left: Interactive High-Precision Vector Threat Map (Leaflet & CartoDB Dark Matter) -->
+                <!-- Left: Interactive High-Precision Vector Threat Map (Leaflet & ArcGIS Dark Canvas) -->
                 <div class="panel-box" style="margin-bottom:0;">
                     <div class="panel-box-header">
                         <div class="panel-box-title">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
-                            <span>Global Inbound Threat &amp; DDoS Attack Origin Map (CartoDB Dark Matter)</span>
+                            <span>Global Inbound Threat &amp; DDoS Attack Origin Map (Enterprise Dark GIS)</span>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <span class="secops-pill"><span class="dot-live"></span> LIVE ATTACK VECTORS</span>
@@ -3085,10 +3088,15 @@
                     attributionControl: false
                 });
 
-                // CartoDB Dark Matter Real Vector Tiles
-                L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                    subdomains: 'abcd',
-                    maxZoom: 19
+                // Enterprise ArcGIS World Dark Canvas (100% Free, Zero API Key, No Watermark)
+                L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+                    maxZoom: 16,
+                    attribution: ''
+                }).addTo(leafletMap);
+
+                L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
+                    maxZoom: 16,
+                    attribution: ''
                 }).addTo(leafletMap);
 
                 threatArcsLayer = L.layerGroup().addTo(leafletMap);

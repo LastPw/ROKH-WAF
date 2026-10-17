@@ -1,19 +1,19 @@
 # ==============================================================================
-# ROKH WAF - Automated Self-Detecting Installer for Windows
+# ROKH WAF - Automated Self-Detecting Installer for Windows (100% Pure Rust)
 # ==============================================================================
 
 $ErrorActionPreference = "Continue"
 
 Write-Host ""
 Write-Host "======================================================================" -ForegroundColor Cyan
-Write-Host " [ROKH WAF] Automated Installation and Environment Setup" -ForegroundColor Cyan
+Write-Host " [ROKH WAF] Automated Installation and Environment Setup (Native Rust)" -ForegroundColor Cyan
 Write-Host "======================================================================" -ForegroundColor Cyan
 
 # ------------------------------------------------------------------------------
 # 1. Hardware and OS Auto-Detection
 # ------------------------------------------------------------------------------
 Write-Host ""
-Write-Host "[1/6] Auto-detecting Hardware and OS Specifications..." -ForegroundColor Yellow
+Write-Host "[1/4] Auto-detecting Hardware and OS Specifications..." -ForegroundColor Yellow
 
 $osCaption = (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).Caption
 if (-not $osCaption) { $osCaption = [System.Environment]::OSVersion.VersionString }
@@ -32,59 +32,10 @@ Write-Host "  [+] CPU Cores      : $cpuCores Parallel Processing Threads (Tokio 
 Write-Host "  [+] Total RAM      : $ramGb GB" -ForegroundColor Green
 
 # ------------------------------------------------------------------------------
-# 2. Python Environment Auto-Detection
+# 2. Rust & Cargo Auto-Detection
 # ------------------------------------------------------------------------------
 Write-Host ""
-Write-Host "[2/6] Auto-detecting Python 3.10+ Environment..." -ForegroundColor Yellow
-
-$pythonCmd = $null
-
-if (Get-Command python -ErrorAction SilentlyContinue) {
-    $pythonCmd = "python"
-} elseif (Get-Command py -ErrorAction SilentlyContinue) {
-    $pythonCmd = "py"
-} else {
-    $searchPaths = @(
-        "$env:LOCALAPPDATA\Programs\Python\Python313\python.exe",
-        "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",
-        "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe",
-        "$env:LOCALAPPDATA\Programs\Python\Python310\python.exe",
-        "$env:ProgramFiles\Python313\python.exe",
-        "$env:ProgramFiles\Python312\python.exe",
-        "$env:ProgramFiles\Python311\python.exe",
-        "$env:ProgramFiles\Python310\python.exe"
-    )
-
-    foreach ($p in $searchPaths) {
-        if (Test-Path $p) {
-            $dir = Split-Path $p -Parent
-            $env:PATH = "$($dir);$($dir)\Scripts;" + $env:PATH
-            $pythonCmd = $p
-            Write-Host "  [+] Auto-discovered Python outside PATH: $p" -ForegroundColor Cyan
-            break
-        }
-    }
-}
-
-if ($pythonCmd) {
-    $pyVer = & $pythonCmd --version 2>&1
-    Write-Host "  [+] Python Binary  : $pythonCmd ($pyVer)" -ForegroundColor Green
-} else {
-    Write-Host "  [-] Python not found. Attempting auto-installation via winget..." -ForegroundColor Yellow
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        winget install Python.Python.3.11 --silent --accept-package-agreements --accept-source-agreements
-        Write-Host "  [+] Python installed. Please restart your terminal." -ForegroundColor Green
-    } else {
-        Write-Host "  [-] Error: Please install Python 3.10+ from https://www.python.org/downloads/" -ForegroundColor Red
-        exit 1
-    }
-}
-
-# ------------------------------------------------------------------------------
-# 3. Rust & Cargo Auto-Detection
-# ------------------------------------------------------------------------------
-Write-Host ""
-Write-Host "[3/6] Auto-detecting Rust and Cargo Compiler Toolchain..." -ForegroundColor Yellow
+Write-Host "[2/4] Auto-detecting Rust and Cargo Compiler Toolchain..." -ForegroundColor Yellow
 
 $cargoCmd = $null
 
@@ -116,10 +67,10 @@ if ($cargoCmd) {
 }
 
 # ------------------------------------------------------------------------------
-# 4. Port Availability Diagnostics
+# 3. Port Availability Diagnostics
 # ------------------------------------------------------------------------------
 Write-Host ""
-Write-Host "[4/6] Checking Port Availability (Port 8080 and 9000)..." -ForegroundColor Yellow
+Write-Host "[3/4] Checking Port Availability (Port 8080)..." -ForegroundColor Yellow
 
 function Check-PortInUse([int]$p) {
     $client = New-Object System.Net.Sockets.TcpClient
@@ -139,56 +90,39 @@ function Check-PortInUse([int]$p) {
 }
 
 $p8080 = Check-PortInUse 8080
-$p9000 = Check-PortInUse 9000
 
 if ($p8080) {
-    Write-Host "  [i] Port 8080 (WAF Proxy) is currently in use (Active WAF Instance Detected)." -ForegroundColor Cyan
+    Write-Host "  [i] Port 8080 (WAF Ingress) is currently in use (Active WAF Instance Detected)." -ForegroundColor Cyan
 } else {
-    Write-Host "  [+] Port 8080 (WAF Proxy) is FREE and Ready." -ForegroundColor Green
-}
-
-if ($p9000) {
-    Write-Host "  [i] Port 9000 (SOC Center) is currently in use (Active SOC Service Detected)." -ForegroundColor Cyan
-} else {
-    Write-Host "  [+] Port 9000 (SOC Center) is FREE and Ready." -ForegroundColor Green
-}
-
-if (Test-Path "scripts\discover_services.py") {
-    Write-Host ""
-    Write-Host "  [*] Auto-detecting running Web Servers & Services on localhost:" -ForegroundColor Cyan
-    & $pythonCmd scripts\discover_services.py
+    Write-Host "  [+] Port 8080 (WAF Ingress) is FREE and Ready." -ForegroundColor Green
 }
 
 # ------------------------------------------------------------------------------
-# 5. Python Dependencies Auto-Installation
+# 4. Rust Core Engine Release Compilation and Verification
 # ------------------------------------------------------------------------------
 Write-Host ""
-Write-Host "[5/6] Verifying and Installing Python Requirements..." -ForegroundColor Yellow
-
-& $pythonCmd -m pip install --upgrade pip --quiet
-& $pythonCmd -m pip install -r requirements.txt --quiet
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "  [+] Python dependencies verified (FastAPI, Uvicorn, Requests, Pydantic, NumPy)." -ForegroundColor Green
-} else {
-    Write-Host "  [!] Notice: Verify network connection for pip install." -ForegroundColor Yellow
-}
-
-# ------------------------------------------------------------------------------
-# 6. Rust Core Engine Release Compilation and Verification
-# ------------------------------------------------------------------------------
-Write-Host ""
-Write-Host "[6/6] Checking and Compiling Rust Release Binary (O3 Optimized)..." -ForegroundColor Yellow
+Write-Host "[4/4] Checking and Compiling Pure Rust Release Binaries (O3 Optimized)..." -ForegroundColor Yellow
 
 $binPath = "target\release\waf_engine.exe"
 if (Test-Path $binPath) {
-    Write-Host "  [+] Release binary already compiled and ready: $binPath" -ForegroundColor Green
+    Write-Host "  [+] WAF Core binary ready: $binPath" -ForegroundColor Green
 } else {
-    & $cargoCmd build --release
+    & $cargoCmd build --release --bin waf_engine
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  [+] Rust WAF Engine compiled successfully: $binPath" -ForegroundColor Green
     } else {
         Write-Host "  [-] Error compiling Rust engine." -ForegroundColor Red
         exit 1
+    }
+}
+
+$benchBin = "target\release\rokh_bench.exe"
+if (Test-Path $benchBin) {
+    Write-Host "  [+] Benchmark CLI tool ready: $benchBin" -ForegroundColor Green
+} else {
+    & $cargoCmd build --release --bin rokh_bench
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  [+] Benchmark tool compiled successfully: $benchBin" -ForegroundColor Green
     }
 }
 
@@ -205,9 +139,11 @@ Write-Host ""
 Write-Host "======================================================================" -ForegroundColor Green
 Write-Host " [SUCCESS] ROKH WAF INSTALLATION AND AUTO-DETECTION COMPLETE!" -ForegroundColor Green
 Write-Host "======================================================================" -ForegroundColor Green
-Write-Host " Launch and protect any web service interactively using:" -ForegroundColor White
+Write-Host " Launch WAF & Embedded SOC Console:" -ForegroundColor White
 Write-Host "   .\start_waf.ps1" -ForegroundColor Cyan
-Write-Host " Or:" -ForegroundColor White
-Write-Host "   python start_waf.py --target http://127.0.0.1:3000" -ForegroundColor Cyan
+Write-Host "   Or: .\target\release\waf_engine.exe --port 8080" -ForegroundColor Cyan
+Write-Host ""
+Write-Host " Run Native Security Audit & Benchmark Suite:" -ForegroundColor White
+Write-Host "   cargo run --bin rokh_bench --release" -ForegroundColor Cyan
 Write-Host "======================================================================" -ForegroundColor Green
 Write-Host ""

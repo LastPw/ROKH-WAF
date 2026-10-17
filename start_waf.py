@@ -156,17 +156,6 @@ def interactive_wizard():
 
     # 5. SOC Dashboard
     launch_soc = True
-    soc_port = 9000
-    if ":9000" in target_url:
-        print("\n [5] Target backend runs on port 9000. SOC Dashboard will share this endpoint.")
-    else:
-        print(f"\n [5] Launch Security Operations Center (SOC Dashboard)?")
-        raw_soc = input("     [Y/n, Default: Y]: ").strip().lower()
-        launch_soc = False if raw_soc == "n" else True
-        if launch_soc:
-            soc_port = 9000
-            if waf_port == 9000:
-                soc_port = 9090
 
     return {
         "target_url": target_url,
@@ -174,16 +163,14 @@ def interactive_wizard():
         "waf_mode": waf_mode,
         "rate_limit": rate_limit,
         "launch_soc": launch_soc,
-        "soc_port": soc_port,
     }
 
 def main():
-    parser = argparse.ArgumentParser(description="ROKH WAF - Smart Launcher")
+    parser = argparse.ArgumentParser(description="ROKH WAF - Smart Launcher (Pure Native Rust)")
     parser.add_argument("--target", "-t", type=str, help="Target backend service to protect")
     parser.add_argument("--port", "-p", type=int, default=None, help="WAF Proxy listen port")
     parser.add_argument("--mode", "-m", type=str, choices=["PREVENTION", "DETECTION"], help="Security mode")
     parser.add_argument("--rpm", type=int, help="Rate limit per minute per IP")
-    parser.add_argument("--no-soc", action="store_true", help="Do not launch SOC Dashboard")
     args = parser.parse_args()
 
     print_banner()
@@ -194,8 +181,7 @@ def main():
             "waf_port": args.port or 8080,
             "waf_mode": args.mode or "PREVENTION",
             "rate_limit": args.rpm or 60,
-            "launch_soc": not args.no_soc,
-            "soc_port": 9000 if (args.port or 8080) != 9000 else 9090,
+            "launch_soc": True,
         }
     else:
         cfg = interactive_wizard()
@@ -222,16 +208,8 @@ def main():
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, shutdown)
 
-    # 1. Start Python SOC Dashboard if requested
-    if cfg["launch_soc"]:
-        print(f"\n [1/2] Initializing Security Operations Center (SOC) on port {cfg['soc_port']}...")
-        soc_cmd = [sys.executable, "-m", "uvicorn", "python_soc.app:app", "--host", "127.0.0.1", "--port", str(cfg["soc_port"]), "--log-level", "warning"]
-        soc_proc = subprocess.Popen(soc_cmd, cwd=BASE_DIR)
-        procs.append(soc_proc)
-        time.sleep(1.5)
-
-    # 2. Start Rust WAF Engine
-    print(f" [2/2] Launching WAF Core Proxy (Port {cfg['waf_port']}) -> Routing to {cfg['target_url']}...")
+    # Start Rust WAF Engine (SOC Dashboard & Mock Target are built directly in pure Rust!)
+    print(f" [*] Launching Native Rust WAF Core (Port {cfg['waf_port']}) -> Routing to {cfg['target_url']}...")
     waf_cmd = [
         waf_binary,
         "--target", cfg["target_url"],
@@ -244,14 +222,15 @@ def main():
     time.sleep(1.0)
 
     print("\n" + "=" * 70)
-    print(" [ONLINE] ROKH WAF IS ACTIVELY PROTECTING YOUR SERVICES!")
+    print(" [ONLINE] ROKH WAF IS ACTIVELY PROTECTING YOUR SERVICES (100% PURE RUST)!")
     print("=" * 70)
-    print(f" Target Backend Server : {cfg['target_url']}")
-    print(f" WAF Proxy Ingress     : http://127.0.0.1:{cfg['waf_port']}")
-    if cfg["launch_soc"]:
-        print(f" SOC Security Console  : http://127.0.0.1:{cfg['soc_port']}")
-    print(f" Operational Mode      : {cfg['waf_mode']}")
-    print(f" Anti-DDoS Rate Limit  : {cfg['rate_limit']} req/min per IP")
+    print(f" Target Backend Server     : {cfg['target_url']}")
+    print(f" WAF Proxy Ingress         : http://127.0.0.1:{cfg['waf_port']}")
+    print(f" Embedded SOC Dashboard    : http://127.0.0.1:{cfg['waf_port']}/dashboard")
+    print(f" Built-in Mock Target Demo : http://127.0.0.1:{cfg['waf_port']}/target/search")
+    print(f" Security Benchmark Tool   : cargo run --bin rokh_bench --release")
+    print(f" Operational Mode          : {cfg['waf_mode']}")
+    print(f" Anti-DDoS Rate Limit      : {cfg['rate_limit']} req/min per IP")
     print("=" * 70)
     print(" Press Ctrl+C at any time to stop the firewall.")
     print("=" * 70 + "\n")

@@ -1,5 +1,12 @@
 # ==============================================================================
-# ROKH WAF - Windows PowerShell Launcher
+# ROKH WAF - Windows PowerShell Launcher (Pure Native Rust)
 # ==============================================================================
 
-python start_waf.py $args
+$bin = ".\target\release\waf_engine.exe"
+if (-not (Test-Path $bin)) {
+    Write-Host "[*] Compiling ROKH WAF release binary..." -ForegroundColor Cyan
+    cargo build --release --bin waf_engine
+}
+
+& $bin @args
+

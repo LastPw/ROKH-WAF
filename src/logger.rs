@@ -39,6 +39,7 @@ pub struct LogEntry<'a> {
 pub struct WafLogger {
     sender: Sender<OwnedLogEntry>,
     current_mode: Arc<AtomicU8>, // 0 = Prevention, 1 = Detection
+    db_path: String,
 }
 
 impl WafLogger {
@@ -141,6 +142,7 @@ impl WafLogger {
         Ok(Self {
             sender,
             current_mode,
+            db_path: db_path.to_string(),
         })
     }
 
@@ -176,10 +178,159 @@ impl WafLogger {
     }
 
     /// Updates WAF mode in RAM atomic cache
-    #[allow(dead_code)]
     pub fn set_config_mode(&self, mode: &str) {
         let val = if mode.eq_ignore_ascii_case("DETECTION") { 1 } else { 0 };
         self.current_mode.store(val, Ordering::SeqCst);
+    }
+
+    /// Returns aggregated SOC statistics and breakdown of threats
+    pub fn get_stats(&self) -> serde_json::Value {
+        let conn = match Connection::open(&self.db_path) {
+            Ok(c) => c,
+            Err(_) => {
+                return serde_json::json!({
+                    "total_inspected": 0,
+                    "blocked": 0,
+                    "passed": 0,
+                    "flagged": 0,
+                    "block_ratio": 0.0,
+                    "threat_breakdown": {},
+                    "top_attackers": []
+                });
+            }
+        };
+
+        let total: i64 = conn.query_row("SELECT COUNT(*) FROM waf_logs", [], |r| r.get(0)).unwrap_or(0);
+        let blocked: i64 = conn.query_row("SELECT COUNT(*) FROM waf_logs WHERE action_taken = 'BLOCKED'", [], |r| r.get(0)).unwrap_or(0);
+        let passed: i64 = conn.query_row("SELECT COUNT(*) FROM waf_logs WHERE action_taken = 'PASSED'", [], |r| r.get(0)).unwrap_or(0);
+        let flagged: i64 = conn.query_row("SELECT COUNT(*) FROM waf_logs WHERE action_taken = 'FLAGGED'", [], |r| r.get(0)).unwrap_or(0);
+
+        let mut threat_breakdown = serde_json::Map::new();
+        if let Ok(mut stmt) = conn.prepare("SELECT attack_type, COUNT(*) FROM waf_logs WHERE attack_type != 'CLEAN' GROUP BY attack_type ORDER BY COUNT(*) DESC") {
+            if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))) {
+                for item in rows.flatten() {
+                    threat_breakdown.insert(item.0, serde_json::Value::from(item.1));
+                }
+            }
+        }
+
+        let mut top_attackers = Vec::new();
+        if let Ok(mut stmt) = conn.prepare("SELECT client_ip, COUNT(*) FROM waf_logs WHERE action_taken = 'BLOCKED' GROUP BY client_ip ORDER BY COUNT(*) DESC LIMIT 5") {
+            if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))) {
+                for item in rows.flatten() {
+                    top_attackers.push(serde_json::json!({
+                        "ip": item.0,
+                        "count": item.1
+                    }));
+                }
+            }
+        }
+
+        let ratio = if total > 0 {
+            ((blocked as f64 / total as f64) * 1000.0).round() / 10.0
+        } else {
+            0.0
+        };
+
+        serde_json::json!({
+            "total_inspected": total,
+            "blocked": blocked,
+            "passed": passed,
+            "flagged": flagged,
+            "block_ratio": ratio,
+            "threat_breakdown": threat_breakdown,
+            "top_attackers": top_attackers
+        })
+    }
+
+    /// Retrieves paginated security incidents for SOC stream
+    pub fn get_logs(&self, limit: usize, attack_type: Option<&str>) -> Vec<serde_json::Value> {
+        let conn = match Connection::open(&self.db_path) {
+            Ok(c) => c,
+            Err(_) => return Vec::new(),
+        };
+
+        let mut logs = Vec::new();
+        let query = if let Some(at) = attack_type {
+            if at != "ALL" && !at.is_empty() {
+                format!("SELECT id, timestamp, client_ip, method, path, attack_type, rule_id, severity, action_taken, status_code, blocked_reason, query_params, body_snippet FROM waf_logs WHERE attack_type = '{}' ORDER BY id DESC LIMIT {}", at.replace('\'', "''"), limit)
+            } else {
+                format!("SELECT id, timestamp, client_ip, method, path, attack_type, rule_id, severity, action_taken, status_code, blocked_reason, query_params, body_snippet FROM waf_logs ORDER BY id DESC LIMIT {}", limit)
+            }
+        } else {
+            format!("SELECT id, timestamp, client_ip, method, path, attack_type, rule_id, severity, action_taken, status_code, blocked_reason, query_params, body_snippet FROM waf_logs ORDER BY id DESC LIMIT {}", limit)
+        };
+
+        if let Ok(mut stmt) = conn.prepare(&query) {
+            let rows = stmt.query_map([], |row| {
+                Ok(serde_json::json!({
+                    "id": row.get::<_, i64>(0)?,
+                    "timestamp": row.get::<_, String>(1)?,
+                    "client_ip": row.get::<_, String>(2)?,
+                    "method": row.get::<_, String>(3)?,
+                    "path": row.get::<_, String>(4)?,
+                    "attack_type": row.get::<_, String>(5)?,
+                    "rule_id": row.get::<_, String>(6)?,
+                    "severity": row.get::<_, String>(7)?,
+                    "action_taken": row.get::<_, String>(8)?,
+                    "status_code": row.get::<_, i32>(9)?,
+                    "blocked_reason": row.get::<_, Option<String>>(10)?,
+                    "query_params": row.get::<_, Option<String>>(11)?,
+                    "body_snippet": row.get::<_, Option<String>>(12)?,
+                }))
+            });
+
+            if let Ok(mapped) = rows {
+                for entry in mapped.flatten() {
+                    logs.push(entry);
+                }
+            }
+        }
+
+        logs
+    }
+
+    /// Truncates the security log table
+    pub fn clear_logs(&self) -> Result<(), rusqlite::Error> {
+        let conn = Connection::open(&self.db_path)?;
+        conn.execute("DELETE FROM waf_logs", [])?;
+        Ok(())
+    }
+
+    /// Returns persistent configuration keys
+    pub fn get_config(&self) -> serde_json::Value {
+        let conn = match Connection::open(&self.db_path) {
+            Ok(c) => c,
+            Err(_) => return serde_json::json!({"mode": self.get_config_mode()}),
+        };
+
+        let mut config_map = serde_json::Map::new();
+        config_map.insert("mode".to_string(), serde_json::Value::from(self.get_config_mode()));
+
+        if let Ok(mut stmt) = conn.prepare("SELECT key, value FROM waf_config") {
+            if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
+                for (k, v) in rows.flatten() {
+                    config_map.insert(k, serde_json::Value::from(v));
+                }
+            }
+        }
+
+        serde_json::Value::Object(config_map)
+    }
+
+    /// Updates persistent configuration in SQLite and updates RAM atomic cache if needed
+    pub fn update_config(&self, key: &str, value: &str) -> Result<(), rusqlite::Error> {
+        let conn = Connection::open(&self.db_path)?;
+        conn.execute(
+            "INSERT OR REPLACE INTO waf_config (key, value) VALUES (?1, ?2)",
+            params![key, value],
+        )?;
+
+        if key.eq_ignore_ascii_case("mode") {
+            self.set_config_mode(value);
+        }
+
+        Ok(())
     }
 }
 

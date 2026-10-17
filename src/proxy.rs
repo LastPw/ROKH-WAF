@@ -14,6 +14,8 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+const DASHBOARD_HTML: &str = include_str!("soc_dashboard.html");
+
 pub struct AppState {
     pub config: WafConfig,
     pub rules: RuleEngine,
@@ -61,6 +63,171 @@ pub async fn proxy_handler(
 
     state.metrics_requests_total.fetch_add(1, Ordering::Relaxed);
 
+    // 1.0 Built-in SOC Web Dashboard
+    if path == "/" || path == "/dashboard" || path == "/soc" {
+        return (
+            StatusCode::OK,
+            [("Content-Type", "text/html; charset=utf-8")],
+            DASHBOARD_HTML,
+        )
+            .into_response();
+    }
+
+    // 1.05 Built-in SOC REST APIs
+    if path == "/api/stats" {
+        let stats = state.logger.get_stats();
+        return (
+            StatusCode::OK,
+            [("Content-Type", "application/json")],
+            stats.to_string(),
+        )
+            .into_response();
+    }
+
+    if path == "/api/logs" {
+        let limit = query_string
+            .as_deref()
+            .and_then(|q| {
+                q.split('&').find_map(|pair| {
+                    let mut kv = pair.splitn(2, '=');
+                    if kv.next()? == "limit" {
+                        kv.next()?.parse::<usize>().ok()
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or(50);
+
+        let attack_type = query_string.as_deref().and_then(|q| {
+            q.split('&').find_map(|pair| {
+                let mut kv = pair.splitn(2, '=');
+                if kv.next()? == "attack_type" {
+                    Some(kv.next().unwrap_or("ALL"))
+                } else {
+                    None
+                }
+            })
+        });
+
+        let logs = state.logger.get_logs(limit, attack_type);
+        return (
+            StatusCode::OK,
+            [("Content-Type", "application/json")],
+            serde_json::to_string(&logs).unwrap_or_else(|_| "[]".to_string()),
+        )
+            .into_response();
+    }
+
+    if path == "/api/logs/clear" {
+        let _ = state.logger.clear_logs();
+        return (
+            StatusCode::OK,
+            [("Content-Type", "application/json")],
+            json!({"status": "cleared"}).to_string(),
+        )
+            .into_response();
+    }
+
+    if path == "/api/config" {
+        if method == "POST" {
+            let bytes = match to_bytes(body, state.config.max_body_size_bytes).await {
+                Ok(b) => b,
+                Err(_) => Bytes::new(),
+            };
+            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                if let (Some(k), Some(val)) = (v.get("key").and_then(|s| s.as_str()), v.get("value").and_then(|s| s.as_str())) {
+                    let _ = state.logger.update_config(k, val);
+                    return (
+                        StatusCode::OK,
+                        [("Content-Type", "application/json")],
+                        json!({"status": "success", "updated": {k: val}}).to_string(),
+                    )
+                        .into_response();
+                }
+            }
+            return (
+                StatusCode::BAD_REQUEST,
+                [("Content-Type", "application/json")],
+                json!({"error": "Invalid configuration payload"}).to_string(),
+            )
+                .into_response();
+        } else {
+            let config = state.logger.get_config();
+            return (
+                StatusCode::OK,
+                [("Content-Type", "application/json")],
+                config.to_string(),
+            )
+                .into_response();
+        }
+    }
+
+    if path == "/api/ddos/status" {
+        let metrics = state.antiddos.get_metrics();
+        return (
+            StatusCode::OK,
+            [("Content-Type", "application/json")],
+            metrics.to_string(),
+        )
+            .into_response();
+    }
+
+    if path == "/api/ddos/toggle" {
+        let query = parts.uri.query().unwrap_or("");
+        let enable = if query.contains("enable=1") || query.contains("enable=true") {
+            state.antiddos.set_under_attack_mode(true);
+            true
+        } else if query.contains("enable=0") || query.contains("enable=false") {
+            state.antiddos.set_under_attack_mode(false);
+            false
+        } else {
+            let current = state
+                .antiddos
+                .under_attack_mode
+                .load(Ordering::Relaxed);
+            state.antiddos.set_under_attack_mode(!current);
+            !current
+        };
+        let res = json!({
+            "status": "SUCCESS",
+            "under_attack_mode": enable
+        });
+        return (
+            StatusCode::OK,
+            [("Content-Type", "application/json")],
+            res.to_string(),
+        )
+            .into_response();
+    }
+
+    if path == "/api/ddos/unban" {
+        let query = parts.uri.query().unwrap_or("");
+        let ip_to_unban = query
+            .split('&')
+            .find_map(|p| {
+                let mut s = p.splitn(2, '=');
+                if s.next()? == "ip" {
+                    Some(s.next().unwrap_or(""))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or("");
+        let unbanned = state.antiddos.unban_ip(ip_to_unban);
+        let res = json!({
+            "status": "SUCCESS",
+            "ip": ip_to_unban,
+            "unbanned": unbanned
+        });
+        return (
+            StatusCode::OK,
+            [("Content-Type", "application/json")],
+            res.to_string(),
+        )
+            .into_response();
+    }
+
     // 1.1 Prometheus Metrics Endpoint
     if path == "/metrics" || path == "/__rokh/metrics" {
         let reqs = state.metrics_requests_total.load(Ordering::Relaxed);
@@ -105,7 +272,7 @@ pub async fn proxy_handler(
     }
 
     // 1.2 Native AI Predict Endpoint (Direct In-Memory Neural Inference)
-    if path == "/__rokh_ai/predict" || path == "/__rokh/ai" {
+    if path == "/__rokh_ai/predict" || path == "/__rokh/ai" || path == "/api/ai/predict" {
         let payload = if method == "POST" {
             let bytes = match to_bytes(body, state.config.max_body_size_bytes).await {
                 Ok(b) => b,
@@ -605,6 +772,54 @@ pub async fn proxy_handler(
         status_code: 200,
         blocked_reason: None,
     });
+
+    // 7.5 Built-in Mock Target endpoints (Simulated Demo Backend)
+    if path.starts_with("/target/") {
+        if path == "/target/search" {
+            let q = query_string.as_deref().unwrap_or("");
+            return (
+                StatusCode::OK,
+                [("Content-Type", "application/json")],
+                json!({
+                    "status": "success",
+                    "backend": "ROKH Native Rust Target Engine v1.0",
+                    "message": format!("Processed search query successfully: {}", q),
+                    "raw_query": q,
+                    "results": [
+                        {"id": 1, "title": "Cybersecurity Fundamentals", "category": "defense"},
+                        {"id": 2, "title": "Web Application Firewalls (WAF) Deep Dive", "category": "engineering"}
+                    ]
+                })
+                .to_string(),
+            )
+                .into_response();
+        } else if path == "/target/login" {
+            return (
+                StatusCode::OK,
+                [("Content-Type", "application/json")],
+                json!({
+                    "status": "authenticated",
+                    "backend": "ROKH Native Target Auth Service",
+                    "timestamp": chrono::Utc::now().to_rfc3339()
+                })
+                .to_string(),
+            )
+                .into_response();
+        } else if path == "/target/view-file" {
+            let file = query_string.as_deref().unwrap_or("notes.txt");
+            return (
+                StatusCode::OK,
+                [("Content-Type", "application/json")],
+                json!({
+                    "status": "file_read_success",
+                    "file_requested": file,
+                    "content": format!("Protected simulated file content for: {}", file)
+                })
+                .to_string(),
+            )
+                .into_response();
+        }
+    }
 
     forward_to_backend(&state, parts.method, &path, query_string.as_deref(), parts.headers, body_bytes, &client_ip).await
 }

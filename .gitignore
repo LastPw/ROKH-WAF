@@ -44,6 +44,8 @@ waf_commercial_ad.mp4
 # Private Presentation & Motion Graphics (Local only - Excluded from GitHub)
 showcase/
 rokh_motion_cloudflare.html
+presentation_assets/
+
 
 # Operating System & IDE Caches
 .DS_Store

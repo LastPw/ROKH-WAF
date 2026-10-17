@@ -5,29 +5,46 @@ use urlencoding::decode;
 pub struct Deobfuscator;
 
 impl Deobfuscator {
+    #[allow(dead_code)]
     pub fn normalize(input: &str) -> String {
+        Self::normalize_with_score(input).0
+    }
+
+    pub fn normalize_with_score(input: &str) -> (String, f64) {
         let mut result = input.to_string();
+        let mut evasion_score = 0.0f64;
 
         // 1. Recursive URL decoding (up to 5 iterations to prevent evasion via multi-layer encoding)
+        let mut decode_iterations = 0;
         for _ in 0..5 {
             if let Ok(decoded) = decode(&result) {
                 if decoded == result {
                     break;
                 }
                 result = decoded.into_owned();
+                decode_iterations += 1;
             } else {
                 break;
             }
         }
+        if decode_iterations >= 2 {
+            evasion_score += 2.0; // Nested URL encoding detected
+        }
 
         // 2. Decode form-urlencoded '+' as space, and remove null bytes
+        if result.contains('\0') {
+            evasion_score += 3.0; // Null byte poison attempt
+            result = result.replace('\0', "");
+        }
         result = result.replace('+', " ");
-        result = result.replace('\0', "");
 
         // 3. Normalize common directory separators
-        result = result.replace('\\', "/");
+        if result.contains('\\') {
+            result = result.replace('\\', "/");
+        }
 
         // 4. HTML entity basic unwrapping
+        let pre_html = result.len();
         result = result
             .replace("&quot;", "\"")
             .replace("&#34;", "\"")
@@ -45,8 +62,12 @@ impl Deobfuscator {
             .replace("&rpar;", ")")
             .replace("&tab;", " ")
             .replace("&period;", ".");
+        if result.len() != pre_html {
+            evasion_score += 1.5;
+        }
 
         // 5. Unicode Full-Width character normalization (evasion mitigation)
+        let pre_unicode = result.len();
         result = result
             .replace('＜', "<")
             .replace('＞', ">")
@@ -56,15 +77,18 @@ impl Deobfuscator {
             .replace('＼', "/")
             .replace('；', ";")
             .replace('｜', "|");
+        if result.len() != pre_unicode {
+            evasion_score += 2.5;
+        }
 
-        // 5. Normalize SQL inline comments & unwrap MySQL executable comments
-        // (e.g. /*!50000SELECT*/ -> SELECT, and UN/**/ION -> UN ION)
+        // 6. Normalize SQL inline comments & unwrap MySQL executable comments
+        let mut had_sql_comments = false;
         while let Some(start) = result.find("/*") {
             if let Some(end) = result[start..].find("*/") {
+                had_sql_comments = true;
                 let actual_end = start + end + 2;
                 let comment_slice = &result[start..actual_end];
                 if comment_slice.starts_with("/*!") {
-                    // Unwrap MySQL conditional comment: strip /*! and digits up to the actual SQL token
                     let inner = &comment_slice[3..comment_slice.len() - 2];
                     let trimmed_inner = inner.trim_start_matches(|c: char| c.is_ascii_digit());
                     let replacement = format!(" {} ", trimmed_inner.trim());
@@ -76,9 +100,11 @@ impl Deobfuscator {
                 break;
             }
         }
+        if had_sql_comments {
+            evasion_score += 2.5;
+        }
 
-        // 6. Whitespace and Control Character Normalization
-        // Normalize tabs to spaces, normalize \r\n and \r to \n (preserving \n for shell/header command boundaries)
+        // 7. Whitespace and Control Character Normalization
         result = result
             .replace('\t', " ")
             .replace("\r\n", "\n")
@@ -88,8 +114,7 @@ impl Deobfuscator {
             result = result.replace("  ", " ");
         }
 
-        // 7. Convert to lowercase for uniform regex matching
-        result.to_lowercase()
+        (result.to_lowercase(), evasion_score)
     }
 }
 

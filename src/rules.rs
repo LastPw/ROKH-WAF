@@ -10,6 +10,8 @@ pub enum AttackType {
     RateLimit,
     PromptInjection,
     ZeroDayAnomaly,
+    RequestSmuggling,
+    CompositeAnomaly,
     Clean,
 }
 
@@ -24,6 +26,8 @@ impl AttackType {
             AttackType::RateLimit => "RATE_LIMIT",
             AttackType::PromptInjection => "PROMPT_INJECTION",
             AttackType::ZeroDayAnomaly => "ZERO_DAY_ANOMALY",
+            AttackType::RequestSmuggling => "REQUEST_SMUGGLING",
+            AttackType::CompositeAnomaly => "COMPOSITE_ANOMALY",
             AttackType::Clean => "CLEAN",
         }
     }

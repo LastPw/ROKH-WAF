@@ -305,6 +305,8 @@ impl WafLogger {
                     "XSS" => "PCI-DSS 4.0:Req-6.4.2 | OWASP:A07",
                     "COMMAND_INJECTION" => "PCI-DSS 4.0:Req-6.4.1 | ISO:A.12.6",
                     "PATH_TRAVERSAL" => "PCI-DSS 4.0:Req-6.4.1 | OWASP:A01",
+                    "REQUEST_SMUGGLING" => "PCI-DSS 4.0:Req-6.4.1 | RFC-9110",
+                    "COMPOSITE_ANOMALY" => "PCI-DSS 4.0:Req-6.4.1 | OWASP-CRS:AnomalyMode",
                     "BAD_BOT" => "PCI-DSS 4.0:Req-11.4 | SWIFT-CSP:2.1",
                     "RATE_LIMIT" | "DDOS_FLOOD_JAIL" => "PCI-DSS 4.0:Req-10.2 | SWIFT-CSP:1.4",
                     "PROMPT_INJECTION" => "OWASP-LLM:01 | NIST-AI:2.3",
@@ -312,7 +314,8 @@ impl WafLogger {
                 };
 
                 let cvss_score = match attack_type.as_str() {
-                    "SQL_INJECTION" | "COMMAND_INJECTION" => 9.8,
+                    "SQL_INJECTION" | "COMMAND_INJECTION" | "REQUEST_SMUGGLING" => 9.8,
+                    "COMPOSITE_ANOMALY" => 8.5,
                     "XSS" | "PATH_TRAVERSAL" => 8.2,
                     "PROMPT_INJECTION" => 7.5,
                     "BAD_BOT" | "RATE_LIMIT" | "DDOS_FLOOD_JAIL" => 5.3,

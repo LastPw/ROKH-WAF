@@ -921,6 +921,8 @@
                         <option value="COMMAND_INJECTION">Command Injection</option>
                         <option value="PATH_TRAVERSAL">Path Traversal</option>
                         <option value="BAD_BOT">Malicious Bot</option>
+                        <option value="REQUEST_SMUGGLING">HTTP Request Smuggling</option>
+                        <option value="COMPOSITE_ANOMALY">Composite Threat Anomaly</option>
                         <option value="PROMPT_INJECTION">Prompt Injection</option>
                         <option value="CUSTOM_ACL_BLOCK">Custom ACL Block</option>
                     </select>
@@ -1063,6 +1065,30 @@
                         <div class="rule-footer">
                             <span>DEOBFUSCATOR-CORE</span>
                             <span class="tag tag-pci">PCI-DSS 6.4.1</span>
+                        </div>
+                    </div>
+
+                    <div class="rule-card">
+                        <div class="rule-card-header">
+                            <span class="rule-name">HTTP Request Smuggling Shield</span>
+                            <span class="tag tag-allow">ENABLED</span>
+                        </div>
+                        <div class="rule-desc">Strict RFC 7230 §3.3.3 &amp; RFC 9110 desynchronization defense. Detects CL.TE, TE.CL, obfuscated Transfer-Encoding, and CRLF pipeline injection.</div>
+                        <div class="rule-footer">
+                            <span>ROKH-SMUGGLE-101..105</span>
+                            <span class="tag tag-critical">CVSS 9.8</span>
+                        </div>
+                    </div>
+
+                    <div class="rule-card">
+                        <div class="rule-card-header">
+                            <span class="rule-name">Composite Threat Anomaly Engine</span>
+                            <span class="tag tag-allow">ENABLED</span>
+                        </div>
+                        <div class="rule-desc">OWASP CRS Paranoia scoring ($5.0 threshold) aggregating multi-pass evasion penalty weights, Shannon entropy ($H \ge 4.65$), and neural zero-day intent.</div>
+                        <div class="rule-footer">
+                            <span>CRS-ANOMALY-SCORING</span>
+                            <span class="tag tag-high">CVSS 8.5</span>
                         </div>
                     </div>
                 </div>
@@ -1452,10 +1478,10 @@
             vectorChart = new Chart(ctx2, {
                 type: 'doughnut',
                 data: {
-                    labels: ['SQLi', 'XSS', 'RCE', 'LFI', 'Bots', 'Prompt', 'ACL Block'],
+                    labels: ['SQLi', 'XSS', 'RCE', 'LFI', 'Bots', 'Smuggling', 'Anomaly', 'Prompt / ACL'],
                     datasets: [{
-                        data: [0, 0, 0, 0, 0, 0, 0],
-                        backgroundColor: ['#f59e0b', '#8b5cf6', '#ef4444', '#3b82f6', '#ec4899', '#a855f7', '#f97316'],
+                        data: [0, 0, 0, 0, 0, 0, 0, 0],
+                        backgroundColor: ['#f59e0b', '#8b5cf6', '#ef4444', '#3b82f6', '#ec4899', '#f43f5e', '#06b6d4', '#f97316'],
                         borderWidth: 1,
                         borderColor: '#0d111a'
                     }]
@@ -1494,8 +1520,9 @@
                     tb['COMMAND_INJECTION'] || 0,
                     tb['PATH_TRAVERSAL'] || 0,
                     tb['BAD_BOT'] || 0,
-                    tb['PROMPT_INJECTION'] || 0,
-                    (tb['RATE_LIMIT'] || 0) + (tb['CUSTOM_ACL_BLOCK'] || 0)
+                    tb['REQUEST_SMUGGLING'] || 0,
+                    tb['COMPOSITE_ANOMALY'] || 0,
+                    (tb['PROMPT_INJECTION'] || 0) + (tb['RATE_LIMIT'] || 0) + (tb['CUSTOM_ACL_BLOCK'] || 0)
                 ];
                 vectorChart.update();
 

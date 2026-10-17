@@ -52,6 +52,115 @@ fn format_headers_json(headers: &HeaderMap) -> String {
     serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string())
 }
 
+/// Strict RFC 7230 / 9110 HTTP Request Smuggling and Desynchronization Inspector
+fn inspect_request_smuggling(headers: &HeaderMap, path: &str, query: Option<&str>) -> Option<DetectionResult> {
+    // 1. Check for conflicting Transfer-Encoding and Content-Length (TE.CL / CL.TE desync attack)
+    let has_te = headers.contains_key("transfer-encoding");
+    let has_cl = headers.contains_key("content-length");
+    if has_te && has_cl {
+        return Some(DetectionResult {
+            is_threat: true,
+            attack_type: AttackType::RequestSmuggling,
+            rule_id: "SMUGGLE-101",
+            severity: "CRITICAL",
+            matched_pattern: "Conflicting Transfer-Encoding & Content-Length headers (RFC 7230 §3.3.3 Desync Attack)".to_string(),
+        });
+    }
+
+    // 2. Check for multiple conflicting Content-Length headers
+    let cl_headers: Vec<_> = headers.get_all("content-length").iter().collect();
+    if cl_headers.len() > 1 {
+        let first = cl_headers[0].to_str().unwrap_or("");
+        for cl in &cl_headers[1..] {
+            if cl.to_str().unwrap_or("") != first {
+                return Some(DetectionResult {
+                    is_threat: true,
+                    attack_type: AttackType::RequestSmuggling,
+                    rule_id: "SMUGGLE-102",
+                    severity: "CRITICAL",
+                    matched_pattern: "Multiple conflicting Content-Length header values detected".to_string(),
+                });
+            }
+        }
+    }
+
+    // 3. Check for obfuscated/illegal Transfer-Encoding
+    if let Some(te_val) = headers.get("transfer-encoding").and_then(|v| v.to_str().ok()) {
+        let te_lower = te_val.trim().to_lowercase();
+        if te_lower.contains("identity") || te_lower.contains(',') || (te_lower != "chunked" && !te_lower.is_empty()) {
+            return Some(DetectionResult {
+                is_threat: true,
+                attack_type: AttackType::RequestSmuggling,
+                rule_id: "SMUGGLE-103",
+                severity: "CRITICAL",
+                matched_pattern: format!("Obfuscated/Illegal Transfer-Encoding header: '{}'", te_val),
+            });
+        }
+    }
+
+    // 4. Check for CRLF / HTTP Header Injection in URI or Query String
+    let full_uri = if let Some(q) = query {
+        format!("{}?{}", path, q)
+    } else {
+        path.to_string()
+    };
+    if full_uri.contains("\r\n") || full_uri.contains("%0d%0a") || full_uri.contains("%0D%0A") || full_uri.contains('\r') || full_uri.contains('\n') {
+        return Some(DetectionResult {
+            is_threat: true,
+            attack_type: AttackType::RequestSmuggling,
+            rule_id: "SMUGGLE-104",
+            severity: "CRITICAL",
+            matched_pattern: "CRLF / HTTP Header Injection sequence detected in URI".to_string(),
+        });
+    }
+
+    // 5. Check for Smuggled HTTP requests embedded in query or path
+    let lower_uri = full_uri.replace("%20", " ").replace('+', " ").to_lowercase();
+    if lower_uri.contains("http/1.") || lower_uri.contains("http/2") {
+        if lower_uri.contains("post ") || lower_uri.contains("get ") || lower_uri.contains("put ") || lower_uri.contains("delete ") {
+            return Some(DetectionResult {
+                is_threat: true,
+                attack_type: AttackType::RequestSmuggling,
+                rule_id: "SMUGGLE-105",
+                severity: "CRITICAL",
+                matched_pattern: "Embedded smuggled HTTP request pipeline discovered in URI".to_string(),
+            });
+        }
+    }
+
+    None
+}
+
+/// Validates whether a client IP falls within an allowed or blocked CIDR/IP pattern
+fn ip_matches_cidr(client_ip: &str, ip_cidr: &str) -> bool {
+    let cidr = ip_cidr.trim();
+    if cidr == "*" || cidr.is_empty() {
+        return true;
+    }
+    if client_ip == cidr {
+        return true;
+    }
+    if let Some((net_str, prefix_str)) = cidr.split_once('/') {
+        if let (Ok(std::net::IpAddr::V4(client_v4)), Ok(std::net::IpAddr::V4(net_v4)), Ok(prefix)) = (
+            client_ip.parse::<std::net::IpAddr>(),
+            net_str.parse::<std::net::IpAddr>(),
+            prefix_str.parse::<u32>(),
+        ) {
+            if prefix > 32 {
+                return false;
+            }
+            if prefix == 0 {
+                return true;
+            }
+            let mask = !((1u32 << (32 - prefix)) - 1);
+            let client_u32 = u32::from(client_v4);
+            let net_u32 = u32::from(net_v4);
+            return (client_u32 & mask) == (net_u32 & mask);
+        }
+    }
+    false
+}
+
 pub async fn proxy_handler(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -702,6 +811,22 @@ pub async fn proxy_handler(
         };
     }
 
+    // 2.9 Anti-HTTP Request Smuggling & Desync Shield (RFC 7230 §3.3.3 / RFC 9110)
+    if let Some(smuggle_detection) = inspect_request_smuggling(&parts.headers, &path, query_string.as_deref()) {
+        return handle_threat_response(
+            &state,
+            &client_ip,
+            &method,
+            &path,
+            &headers_json,
+            query_string.as_deref(),
+            None,
+            smuggle_detection,
+            is_html_client,
+        )
+        .await;
+    }
+
     // 3. Inspect User-Agent for known scanners & bad bots
     let user_agent = parts
         .headers
@@ -770,6 +895,11 @@ pub async fn proxy_handler(
         };
 
         if pattern_matches {
+            let ip_pattern = rule.get("ip_cidr").and_then(|v| v.as_str()).unwrap_or("*");
+            if !ip_matches_cidr(&client_ip, ip_pattern) {
+                continue;
+            }
+
             if action == "BLOCK" {
                 state.metrics_blocked_threats.fetch_add(1, Ordering::Relaxed);
                 state.logger.log_event(LogEntry {
@@ -803,94 +933,93 @@ pub async fn proxy_handler(
         }
     }
 
-    // 5. Deep Inspection with Deobfuscation
-    // A) Inspect Path
-    let norm_path = Deobfuscator::normalize(&path);
+    // 5. Deep Multi-Pass Inspection & Composite Threat Anomaly Scoring Engine
+    let mut total_anomaly_score = 0.0f64;
+    let mut anomaly_triggers: Vec<String> = Vec::new();
+    let mut primary_detection: Option<DetectionResult> = None;
+
+    // A) Inspect Path with Evasion Analysis
+    let (norm_path, path_evasion) = Deobfuscator::normalize_with_score(&path);
+    if path_evasion > 0.0 {
+        total_anomaly_score += path_evasion;
+        anomaly_triggers.push(format!("Path Evasion (+{:.1})", path_evasion));
+    }
     let path_result = state.rules.inspect(&norm_path);
     if path_result.is_threat {
-        return handle_threat_response(
-            &state,
-            &client_ip,
-            &method,
-            &path,
-            &headers_json,
-            query_string.as_deref(),
-            body_snippet.as_deref(),
-            path_result,
-            is_html_client,
-        )
-        .await;
-    }
-
-    // B) Inspect Query String
-    let norm_query = query_string.as_ref().map(|q| Deobfuscator::normalize(q));
-    let norm_body = if !body_str.is_empty() {
-        Some(Deobfuscator::normalize(&body_str))
-    } else {
-        None
-    };
-
-    if let Some(ref nq) = norm_query {
-        let query_result = state.rules.inspect(nq);
-        if query_result.is_threat {
-            return handle_threat_response(
-                &state,
-                &client_ip,
-                &method,
-                &path,
-                &headers_json,
-                query_string.as_deref(),
-                body_snippet.as_deref(),
-                query_result,
-                is_html_client,
-            )
-            .await;
+        let pts = if path_result.severity == "CRITICAL" { 6.0 } else { 5.0 };
+        total_anomaly_score += pts;
+        anomaly_triggers.push(format!("{} (+{:.1})", path_result.rule_id, pts));
+        if primary_detection.is_none() {
+            primary_detection = Some(path_result);
         }
     }
 
-    // C) Inspect Body
+    // B) Inspect Query String with Evasion Analysis
+    let (norm_query, query_evasion) = if let Some(ref q) = query_string {
+        let (nq, sc) = Deobfuscator::normalize_with_score(q);
+        (Some(nq), sc)
+    } else {
+        (None, 0.0)
+    };
+    if query_evasion > 0.0 {
+        total_anomaly_score += query_evasion;
+        anomaly_triggers.push(format!("Query Evasion (+{:.1})", query_evasion));
+    }
+    if let Some(ref nq) = norm_query {
+        let query_result = state.rules.inspect(nq);
+        if query_result.is_threat {
+            let pts = if query_result.severity == "CRITICAL" { 6.0 } else { 5.0 };
+            total_anomaly_score += pts;
+            anomaly_triggers.push(format!("{} (+{:.1})", query_result.rule_id, pts));
+            if primary_detection.is_none() {
+                primary_detection = Some(query_result);
+            }
+        }
+    }
+
+    // C) Inspect Body with Evasion Analysis
+    let (norm_body, body_evasion) = if !body_str.is_empty() {
+        let (nb, sc) = Deobfuscator::normalize_with_score(&body_str);
+        (Some(nb), sc)
+    } else {
+        (None, 0.0)
+    };
+    if body_evasion > 0.0 {
+        total_anomaly_score += body_evasion;
+        anomaly_triggers.push(format!("Body Evasion (+{:.1})", body_evasion));
+    }
     if let Some(ref nb) = norm_body {
         let body_result = state.rules.inspect(nb);
         if body_result.is_threat {
-            return handle_threat_response(
-                &state,
-                &client_ip,
-                &method,
-                &path,
-                &headers_json,
-                query_string.as_deref(),
-                body_snippet.as_deref(),
-                body_result,
-                is_html_client,
-            )
-            .await;
+            let pts = if body_result.severity == "CRITICAL" { 6.0 } else { 5.0 };
+            total_anomaly_score += pts;
+            anomaly_triggers.push(format!("{} (+{:.1})", body_result.rule_id, pts));
+            if primary_detection.is_none() {
+                primary_detection = Some(body_result);
+            }
         }
     }
 
     // D) Inspect Headers (Cookie, Referer, Origin) to prevent Header Injection & smuggling
     for header_key in &["cookie", "referer", "origin"] {
         if let Some(header_val) = parts.headers.get(*header_key).and_then(|v| v.to_str().ok()) {
-            let norm_val = Deobfuscator::normalize(header_val);
+            let (norm_val, h_evasion) = Deobfuscator::normalize_with_score(header_val);
+            if h_evasion > 0.0 {
+                total_anomaly_score += h_evasion;
+            }
             let header_res = state.rules.inspect(&norm_val);
             if header_res.is_threat {
-                let trigger_desc = format!("Header [{}]: {}", header_key, header_val);
-                return handle_threat_response(
-                    &state,
-                    &client_ip,
-                    &method,
-                    &path,
-                    &headers_json,
-                    query_string.as_deref(),
-                    Some(&trigger_desc),
-                    header_res,
-                    is_html_client,
-                )
-                .await;
+                let pts = 5.0;
+                total_anomaly_score += pts;
+                anomaly_triggers.push(format!("Header Injection [{}] (+{:.1})", header_key, pts));
+                if primary_detection.is_none() {
+                    primary_detection = Some(header_res);
+                }
             }
         }
     }
 
-    // 5.5 AI Zero-Day & Semantic Anomaly Inspection (< 15µs in-memory neural inference)
+    // E) AI Zero-Day & Semantic Anomaly Inspection (< 15µs in-memory neural inference)
     let inspect_candidates = [
         norm_query.as_deref().filter(|q| !q.is_empty()),
         norm_body.as_deref().filter(|b| !b.is_empty()),
@@ -899,8 +1028,19 @@ pub async fn proxy_handler(
     for candidate in inspect_candidates.into_iter().flatten() {
         state.metrics_ai_inspections.fetch_add(1, Ordering::Relaxed);
         let ai_pred = state.ai.predict(candidate);
+
+        // Shannon Information Entropy threshold check (H >= 4.65 indicates shellcode / high-density obfuscation)
+        if ai_pred.entropy >= 4.65 {
+            total_anomaly_score += 3.5;
+            anomaly_triggers.push(format!("High Shannon Entropy H={:.2} (+3.5)", ai_pred.entropy));
+        }
+
         if ai_pred.is_malicious {
             state.metrics_ai_anomalies.fetch_add(1, Ordering::Relaxed);
+            let ai_pts = if ai_pred.threat_probability >= 0.90 { 6.0 } else { 4.5 };
+            total_anomaly_score += ai_pts;
+            anomaly_triggers.push(format!("AI Neural Anomaly: {} ({:.0}%, +{:.1})", ai_pred.detected_intent, ai_pred.threat_probability * 100.0, ai_pts));
+
             let attack_type = match ai_pred.detected_intent {
                 "PROMPT_INJECTION" => AttackType::PromptInjection,
                 _ => AttackType::ZeroDayAnomaly,
@@ -918,26 +1058,53 @@ pub async fn proxy_handler(
                 ai_pred.threat_probability * 100.0,
                 ai_pred.entropy
             );
-            let detection = DetectionResult {
-                is_threat: true,
-                attack_type,
-                rule_id,
-                severity: if ai_pred.threat_probability >= 0.90 { "CRITICAL" } else { "HIGH" },
-                matched_pattern: pattern_desc,
-            };
-            return handle_threat_response(
-                &state,
-                &client_ip,
-                &method,
-                &path,
-                &headers_json,
-                query_string.as_deref(),
-                body_snippet.as_deref(),
-                detection,
-                is_html_client,
-            )
-            .await;
+            if primary_detection.is_none() {
+                primary_detection = Some(DetectionResult {
+                    is_threat: true,
+                    attack_type,
+                    rule_id,
+                    severity: if ai_pred.threat_probability >= 0.90 { "CRITICAL" } else { "HIGH" },
+                    matched_pattern: pattern_desc,
+                });
+            }
         }
+    }
+
+    // 5.9 Inbound Anomaly Threshold Decision (Threshold: 5.0)
+    let inbound_anomaly_threshold = 5.0f64;
+    if total_anomaly_score >= inbound_anomaly_threshold {
+        let trigger_summary = format!(
+            "Composite Anomaly Score: {:.1} (Threshold: {:.1}) | Triggers: [{}]",
+            total_anomaly_score,
+            inbound_anomaly_threshold,
+            anomaly_triggers.join(", ")
+        );
+
+        let final_detection = if let Some(mut det) = primary_detection {
+            det.matched_pattern = format!("{} | {}", det.matched_pattern, trigger_summary);
+            det
+        } else {
+            DetectionResult {
+                is_threat: true,
+                attack_type: AttackType::CompositeAnomaly,
+                rule_id: "ANOMALY-SCORE-001",
+                severity: if total_anomaly_score >= 8.0 { "CRITICAL" } else { "HIGH" },
+                matched_pattern: trigger_summary,
+            }
+        };
+
+        return handle_threat_response(
+            &state,
+            &client_ip,
+            &method,
+            &path,
+            &headers_json,
+            query_string.as_deref(),
+            body_snippet.as_deref(),
+            final_detection,
+            is_html_client,
+        )
+        .await;
     }
 
     // 6. Anti-DDoS Traffic Policy (Challenges / Rate-Limit / Dynamic Jail)

@@ -77,6 +77,12 @@ impl WafConfig {
                 cfg.rate_limit_rpm = val;
             }
         }
+        if let Ok(d) = std::env::var("ROKH_DB_PATH").or_else(|_| std::env::var("DB_PATH")) {
+            let trimmed = d.trim();
+            if !trimmed.is_empty() {
+                cfg.db_path = trimmed.to_string();
+            }
+        }
 
         // 2. Command-Line Arguments
         let args: Vec<String> = std::env::args().collect();

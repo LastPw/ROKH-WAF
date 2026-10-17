@@ -1,0 +1,30 @@
+# ==============================================================================
+# ROKH WAF (دیواره آتش رُخ) - Docker Compose Deployment
+# ==============================================================================
+version: '3.8'
+
+services:
+  rokh-waf:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rokh-waf:latest
+    container_name: rokh_waf_engine
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - ROKH_LISTEN_ADDR=0.0.0.0:8080
+      - ROKH_BACKEND_URL=http://host.docker.internal:3000
+      - ROKH_MODE=PREVENTION       # PREVENTION or DETECTION
+      - ROKH_RATE_LIMIT=120        # Requests per minute per IP
+      - ROKH_DB_PATH=/app/data/waf_data.db
+      - RUST_LOG=info
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/rokh-api/v1/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 5s

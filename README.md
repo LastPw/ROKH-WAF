@@ -150,43 +150,90 @@ Evaluated via `rokh_bench` executing a multi-threaded asynchronous flood (500 re
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick Start & Universal Installation
 
-### Prerequisites
-* **Rust:** 1.70+ with Cargo (`rustup update stable`)
-* No Python, Node.js, or external database required!
+ROKH WAF is engineered to install effortlessly anywhere in seconds—on bare-metal servers, developer workstations, remote cloud VPSs, or Docker containers.
 
-### 1. Build the Release Binary
-```bash
-cargo build --release
-```
-The compiled binary will be placed at `target/release/waf_engine.exe`.
+### 🌐 Method 1: Universal 1-Liner Automated Install
 
-### 2. Launch ROKH WAF
-Run the binary directly or via PowerShell:
+No manual repository cloning or prerequisites setup needed. Run the one-liner corresponding to your operating system:
+
+#### 🪟 Windows (PowerShell)
 ```powershell
-# Windows PowerShell
-.\start_waf.ps1
+irm https://raw.githubusercontent.com/LastPw/ROKH-WAF/main/install.ps1 | iex
+```
+*Auto-detects CPU/RAM, installs the Rust toolchain via Winget/Rustup if missing, compiles release binaries, and provides desktop & start launchers.*
 
-# Or run directly with custom parameters
-.\target\release\waf_engine.exe --port 8080 --target http://127.0.0.1:3000 --mode PREVENTION --rpm 120
+#### 🐧 Linux & 🍎 macOS (Bash)
+```bash
+curl -sSL https://raw.githubusercontent.com/LastPw/ROKH-WAF/main/install.sh | bash
+```
+*Auto-detects OS package manager (`apt`, `dnf`, `yum`, `apk`, `pacman`, `brew`), installs `build-essential` and Rust compiler, builds binaries, links `/usr/local/bin/rokh-waf`, and automatically registers a `systemd` service (`rokh-waf.service`).*
+
+---
+
+### 🖱️ Method 2: Double-Click Installer (Windows Non-Technical Users)
+1. Clone or download this repository.
+2. Double-click **`install.bat`**.
+3. It bypasses execution policies, configures your environment, and immediately compiles the WAF.
+4. Launch anytime by double-clicking **`start_waf.bat`**!
+
+---
+
+### 🐳 Method 3: Docker & Docker Compose (Zero Host Dependencies)
+Run ROKH WAF inside a lightweight, security-hardened container without installing any Rust compiler or C build tools on your host:
+
+```bash
+# Clone the repository
+git clone https://github.com/LastPw/ROKH-WAF.git
+cd ROKH-WAF
+
+# Build and start in detached mode
+docker compose up -d
+```
+
+View live logs:
+```bash
+docker compose logs -f
+```
+
+---
+
+### 💻 Method 4: Manual Native Build & Run
+If you already have `cargo` installed:
+
+```bash
+# 1. Build optimized release binaries
+cargo build --release
+
+# 2. Launch using platform script
+# Windows:
+.\start_waf.bat
+# Linux / macOS:
+chmod +x ./start_waf.sh && ./start_waf.sh
+```
+
+Or execute directly with custom arguments:
+```bash
+./target/release/waf_engine --port 8080 --target http://127.0.0.1:3000 --mode PREVENTION --rpm 120
 ```
 
 By default:
 * **WAF Ingress Proxy:** `http://127.0.0.1:8080`
 * **Integrated Web SOC Console:** `http://127.0.0.1:8080/dashboard`
 * **Built-in Mock Target Demo:** `http://127.0.0.1:8080/target/search`
+* **Health Check API:** `http://127.0.0.1:8080/rokh-api/v1/health`
 
-### CLI Arguments Reference
+### Environment Variables & CLI Options Reference
 
-| Parameter | Shorthand | Default | Description |
-| :--- | :---: | :--- | :--- |
-| `--target` | `-t` | `http://127.0.0.1:9000` | Upstream backend URL to protect |
-| `--port` | `-p` | `8080` | Port for the WAF proxy to listen on |
-| `--mode` | `-m` | `PREVENTION` | `PREVENTION` (blocks attacks) or `DETECTION` (logs only) |
-| `--rpm` | | `60` | Request rate limit per minute per client IP |
-| `--db` | | `waf_data.db` | Path to the SQLite incident database |
-| `--help` | `-h` | | Display the command-line options manual |
+| Option | Environment Variable | Default | Description |
+| :--- | :--- | :---: | :--- |
+| `--target, -t <URL>` | `ROKH_BACKEND_URL` | `http://127.0.0.1:9000` | Target backend service to protect |
+| `--port, -p <PORT>` | `ROKH_LISTEN_ADDR` / `WAF_PORT` | `8080` | Listening address / port |
+| `--mode, -m <MODE>` | `ROKH_MODE` | `PREVENTION` | `PREVENTION` (blocks attacks) or `DETECTION` (logs only) |
+| `--rpm <COUNT>` | `ROKH_RATE_LIMIT` | `60` | Request rate limit per minute per client IP |
+| `--db <PATH>` | `ROKH_DB_PATH` | `waf_data.db` | Path to persistent SQLite WAL database |
+| `--help, -h` | | | Display the command-line options manual |
 
 ---
 
@@ -226,7 +273,14 @@ rokh-waf/
 ├── Cargo.lock                       # Locked compiler dependency tree
 ├── LICENSE                          # MIT License
 ├── README.md                        # Documentation and architecture guide
-├── start_waf.ps1                    # Native Windows PowerShell launcher
+├── Dockerfile                       # Multi-stage production container build
+├── docker-compose.yml               # 1-command Docker service orchestration
+├── install.bat                      # Windows double-clickable installer wrapper
+├── install.ps1                      # Windows PowerShell universal auto-installer
+├── install.sh                       # Linux & macOS universal bash auto-installer
+├── start_waf.bat                    # Windows 1-click launcher
+├── start_waf.ps1                    # Windows PowerShell launcher
+├── start_waf.sh                     # Linux / macOS launcher
 │
 ├── src/                             # Core WAF Engine (100% Safe Native Rust)
 │   ├── main.rs                      # Service entrypoint & Tokio runtime setup
@@ -235,6 +289,8 @@ rokh-waf/
 │   ├── deobfuscator.rs              # 5-stage anti-evasion string normalizer
 │   ├── ai.rs                        # In-memory Shannon entropy & anomaly classifier
 │   ├── antiddos.rs                  # Sliding window rate limiter & SHA-256 PoW challenge
+│   ├── geoip.rs                     # High-performance GeoIP & ASN intelligence
+│   ├── loadbalancer.rs              # Upstream load balancing & health probing
 │   ├── logger.rs                    # Non-blocking SQLite WAL incident logger
 │   ├── pages.rs                     # Incident block pages & JSON negotiation
 │   ├── config.rs                    # CLI argument parser & runtime configuration

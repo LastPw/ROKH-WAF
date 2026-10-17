@@ -3,6 +3,7 @@ mod antiddos;
 mod config;
 mod deobfuscator;
 mod geoip;
+mod loadbalancer;
 mod logger;
 mod pages;
 mod proxy;
@@ -62,12 +63,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .tcp_nodelay(true)
         .build()?;
 
+    let load_balancer = loadbalancer::LoadBalancer::new(
+        vec![config.backend_url.clone()],
+        loadbalancer::BalancingAlgorithm::RoundRobin,
+    );
+
     let state = Arc::new(AppState {
         config: config.clone(),
         rules,
         antiddos,
         logger,
         http_client,
+        load_balancer,
         ai,
         metrics_requests_total: AtomicU64::new(0),
         metrics_blocked_threats: AtomicU64::new(0),

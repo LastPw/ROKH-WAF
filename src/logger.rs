@@ -22,6 +22,9 @@ pub struct OwnedLogEntry {
     pub blocked_reason: Option<String>,
     pub country_code: String,
     pub country_name: String,
+    pub asn: u32,
+    pub as_org: String,
+    pub ip_type: String,
 }
 
 pub struct LogEntry<'a> {
@@ -39,6 +42,9 @@ pub struct LogEntry<'a> {
     pub blocked_reason: Option<&'a str>,
     pub country_code: &'a str,
     pub country_name: &'a str,
+    pub asn: u32,
+    pub as_org: &'a str,
+    pub ip_type: &'a str,
 }
 
 pub struct WafLogger {
@@ -73,18 +79,24 @@ impl WafLogger {
                  status_code INTEGER NOT NULL,
                  blocked_reason TEXT,
                  country_code TEXT DEFAULT 'LOCAL',
-                 country_name TEXT DEFAULT 'Localhost'
+                 country_name TEXT DEFAULT 'Localhost',
+                 asn INTEGER DEFAULT 0,
+                 as_org TEXT DEFAULT 'Localhost Infrastructure',
+                 ip_type TEXT DEFAULT 'Private'
              );
              CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON waf_logs(timestamp);
              CREATE INDEX IF NOT EXISTS idx_logs_attack_type ON waf_logs(attack_type);
              CREATE INDEX IF NOT EXISTS idx_logs_action ON waf_logs(action_taken);
-             
 
              CREATE TABLE IF NOT EXISTS waf_config (
                  key TEXT PRIMARY KEY,
                  value TEXT NOT NULL
              );
              INSERT OR IGNORE INTO waf_config (key, value) VALUES ('mode', 'PREVENTION');
+             INSERT OR IGNORE INTO waf_config (key, value) VALUES ('block_datacenter_ips', '0');
+             INSERT OR IGNORE INTO waf_config (key, value) VALUES ('block_tor_nodes', '1');
+             INSERT OR IGNORE INTO waf_config (key, value) VALUES ('geofence_mode', 'OFF');
+             INSERT OR IGNORE INTO waf_config (key, value) VALUES ('geofence_countries', 'IR');
 
              CREATE TABLE IF NOT EXISTS waf_custom_rules (
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -101,7 +113,11 @@ impl WafLogger {
         // Ensure backward-compatible migrations for existing databases
         let _ = conn.execute("ALTER TABLE waf_logs ADD COLUMN country_code TEXT DEFAULT 'LOCAL'", []);
         let _ = conn.execute("ALTER TABLE waf_logs ADD COLUMN country_name TEXT DEFAULT 'Localhost'", []);
+        let _ = conn.execute("ALTER TABLE waf_logs ADD COLUMN asn INTEGER DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE waf_logs ADD COLUMN as_org TEXT DEFAULT 'Localhost Infrastructure'", []);
+        let _ = conn.execute("ALTER TABLE waf_logs ADD COLUMN ip_type TEXT DEFAULT 'Private'", []);
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_country ON waf_logs(country_code)", []);
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_asn ON waf_logs(asn)", []);
 
         // Seed initial enterprise banking rules if table is newly initialized
         let count_rules: i64 = conn.query_row("SELECT COUNT(*) FROM waf_custom_rules", [], |r| r.get(0)).unwrap_or(0);
@@ -199,6 +215,9 @@ impl WafLogger {
             blocked_reason: entry.blocked_reason.map(|s| s.to_string()),
             country_code: entry.country_code.to_string(),
             country_name: entry.country_name.to_string(),
+            asn: entry.asn,
+            as_org: entry.as_org.to_string(),
+            ip_type: entry.ip_type.to_string(),
         };
 
         // Try sending into channel without blocking Tokio worker threads
@@ -217,6 +236,40 @@ impl WafLogger {
     pub fn set_config_mode(&self, mode: &str) {
         let val = if mode.eq_ignore_ascii_case("DETECTION") { 1 } else { 0 };
         self.current_mode.store(val, Ordering::SeqCst);
+    }
+
+    /// Retrieves current Network Intelligence and Geo-fencing policies
+    pub fn get_geo_policy(&self) -> serde_json::Value {
+        let conn = match Connection::open(&self.db_path) {
+            Ok(c) => c,
+            Err(_) => return serde_json::json!({
+                "block_datacenter_ips": false,
+                "block_tor_nodes": true,
+                "geofence_mode": "OFF",
+                "geofence_countries": "IR"
+            }),
+        };
+
+        let get_val = |k: &str, def: &str| -> String {
+            conn.query_row("SELECT value FROM waf_config WHERE key = ?1", [k], |r| r.get(0)).unwrap_or_else(|_| def.to_string())
+        };
+
+        serde_json::json!({
+            "block_datacenter_ips": get_val("block_datacenter_ips", "0") == "1",
+            "block_tor_nodes": get_val("block_tor_nodes", "1") == "1",
+            "geofence_mode": get_val("geofence_mode", "OFF"),
+            "geofence_countries": get_val("geofence_countries", "IR")
+        })
+    }
+
+    /// Updates Network Intelligence and Geo-fencing policies
+    pub fn set_geo_policy(&self, block_dc: bool, block_tor: bool, geofence_mode: &str, geofence_countries: &str) -> Result<(), rusqlite::Error> {
+        let conn = Connection::open(&self.db_path)?;
+        conn.execute("INSERT OR REPLACE INTO waf_config (key, value) VALUES ('block_datacenter_ips', ?1)", [if block_dc { "1" } else { "0" }])?;
+        conn.execute("INSERT OR REPLACE INTO waf_config (key, value) VALUES ('block_tor_nodes', ?1)", [if block_tor { "1" } else { "0" }])?;
+        conn.execute("INSERT OR REPLACE INTO waf_config (key, value) VALUES ('geofence_mode', ?1)", [geofence_mode])?;
+        conn.execute("INSERT OR REPLACE INTO waf_config (key, value) VALUES ('geofence_countries', ?1)", [geofence_countries])?;
+        Ok(())
     }
 
     /// Returns aggregated SOC statistics and breakdown of threats
@@ -282,15 +335,18 @@ impl WafLogger {
         })
     }
 
-    /// Returns aggregated country-by-country traffic and threat analytics for World Map
+    /// Returns aggregated country and ASN intelligence analytics for Global Threat Map & SOC
     pub fn get_geo_stats(&self) -> serde_json::Value {
         let conn = match Connection::open(&self.db_path) {
             Ok(c) => c,
-            Err(_) => return serde_json::json!([]),
+            Err(_) => return serde_json::json!({
+                "countries": [],
+                "top_asns": []
+            }),
         };
 
-        let mut list = Vec::new();
-        let query = "SELECT 
+        let mut countries_list = Vec::new();
+        let query_countries = "SELECT 
             COALESCE(country_code, 'LOCAL') as code, 
             COALESCE(country_name, 'Localhost') as name, 
             COUNT(*) as total_reqs, 
@@ -299,7 +355,7 @@ impl WafLogger {
             GROUP BY code 
             ORDER BY total_reqs DESC";
 
-        if let Ok(mut stmt) = conn.prepare(query) {
+        if let Ok(mut stmt) = conn.prepare(query_countries) {
             if let Ok(rows) = stmt.query_map([], |row| {
                 let code: String = row.get(0)?;
                 let name: String = row.get(1)?;
@@ -310,7 +366,7 @@ impl WafLogger {
                 for item in rows.flatten() {
                     let (code, name, total, blocked) = item;
                     let geo = crate::geoip::GeoResolver::build_from_code(&code, false);
-                    list.push(serde_json::json!({
+                    countries_list.push(serde_json::json!({
                         "country_code": code,
                         "country_name": name,
                         "flag": geo.flag,
@@ -326,7 +382,46 @@ impl WafLogger {
             }
         }
 
-        serde_json::json!(list)
+        let mut asns_list = Vec::new();
+        let query_asns = "SELECT 
+            COALESCE(asn, 0) as asn_num, 
+            COALESCE(as_org, 'Localhost Infrastructure') as org, 
+            COALESCE(ip_type, 'Private') as itype, 
+            COUNT(*) as total_reqs, 
+            SUM(CASE WHEN action_taken = 'BLOCKED' THEN 1 ELSE 0 END) as blocked_reqs
+            FROM waf_logs 
+            GROUP BY asn_num 
+            ORDER BY total_reqs DESC 
+            LIMIT 10";
+
+        if let Ok(mut stmt) = conn.prepare(query_asns) {
+            if let Ok(rows) = stmt.query_map([], |row| {
+                let asn: u32 = row.get(0)?;
+                let org: String = row.get(1)?;
+                let itype: String = row.get(2)?;
+                let total: i64 = row.get(3)?;
+                let blocked: i64 = row.get(4)?;
+                Ok((asn, org, itype, total, blocked))
+            }) {
+                for item in rows.flatten() {
+                    let (asn, org, itype, total, blocked) = item;
+                    asns_list.push(serde_json::json!({
+                        "asn": asn,
+                        "as_org": org,
+                        "ip_type": itype,
+                        "total": total,
+                        "blocked": blocked,
+                        "passed": total - blocked,
+                        "block_ratio": if total > 0 { ((blocked as f64 / total as f64) * 1000.0).round() / 10.0 } else { 0.0 }
+                    }));
+                }
+            }
+        }
+
+        serde_json::json!({
+            "countries": countries_list,
+            "top_asns": asns_list
+        })
     }
 
     /// Retrieves paginated security incidents for SOC stream with banking forensics & compliance tags
@@ -355,7 +450,7 @@ impl WafLogger {
         };
 
         let query = format!(
-            "SELECT id, timestamp, client_ip, method, path, attack_type, rule_id, severity, action_taken, status_code, blocked_reason, query_params, body_snippet, headers, COALESCE(country_code, 'LOCAL'), COALESCE(country_name, 'Localhost') FROM waf_logs {} ORDER BY id DESC LIMIT {}",
+            "SELECT id, timestamp, client_ip, method, path, attack_type, rule_id, severity, action_taken, status_code, blocked_reason, query_params, body_snippet, headers, COALESCE(country_code, 'LOCAL'), COALESCE(country_name, 'Localhost'), COALESCE(asn, 0), COALESCE(as_org, 'Localhost Infrastructure'), COALESCE(ip_type, 'Private') FROM waf_logs {} ORDER BY id DESC LIMIT {}",
             where_clause, limit
         );
 
@@ -378,6 +473,9 @@ impl WafLogger {
                 let headers: Option<String> = row.get(13)?;
                 let country_code: String = row.get(14).unwrap_or_else(|_| "LOCAL".to_string());
                 let country_name: String = row.get(15).unwrap_or_else(|_| "Localhost".to_string());
+                let asn: u32 = row.get(16).unwrap_or(0);
+                let as_org: String = row.get(17).unwrap_or_else(|_| "Localhost Infrastructure".to_string());
+                let ip_type: String = row.get(18).unwrap_or_else(|_| "Private".to_string());
                 let geo = crate::geoip::GeoResolver::build_from_code(&country_code, false);
 
                 let pci_tag = match attack_type.as_str() {
@@ -390,6 +488,9 @@ impl WafLogger {
                     "BAD_BOT" => "PCI-DSS 4.0:Req-11.4 | SWIFT-CSP:2.1",
                     "RATE_LIMIT" | "DDOS_FLOOD_JAIL" => "PCI-DSS 4.0:Req-10.2 | SWIFT-CSP:1.4",
                     "PROMPT_INJECTION" => "OWASP-LLM:01 | NIST-AI:2.3",
+                    "DATACENTER_IP_BLOCK" => "PCI-DSS 4.0:Req-6.4.3 | ANTI-BOT",
+                    "TOR_EXIT_NODE_BLOCK" => "PCI-DSS 4.0:Req-11.4 | ANONYMIZER-DROP",
+                    "GEOFENCE_VIOLATION" => "PCI-DSS 4.0:Req-1.3 | GEO-FENCING",
                     _ => "PCI-DSS 4.0:Req-10.3 (AUDIT)",
                 };
 
@@ -397,8 +498,9 @@ impl WafLogger {
                     "SQL_INJECTION" | "COMMAND_INJECTION" | "REQUEST_SMUGGLING" => 9.8,
                     "COMPOSITE_ANOMALY" => 8.5,
                     "XSS" | "PATH_TRAVERSAL" => 8.2,
+                    "TOR_EXIT_NODE_BLOCK" | "DATACENTER_IP_BLOCK" => 7.5,
                     "PROMPT_INJECTION" => 7.5,
-                    "BAD_BOT" | "RATE_LIMIT" | "DDOS_FLOOD_JAIL" => 5.3,
+                    "BAD_BOT" | "RATE_LIMIT" | "DDOS_FLOOD_JAIL" | "GEOFENCE_VIOLATION" => 5.3,
                     _ => 0.0,
                 };
 
@@ -429,6 +531,9 @@ impl WafLogger {
                     "country_code": country_code,
                     "country_name": country_name,
                     "country_flag": geo.flag,
+                    "asn": asn,
+                    "as_org": as_org,
+                    "ip_type": ip_type,
                     "pci_tag": pci_tag,
                     "cvss_score": cvss_score,
                     "sha256_hash": sha256_hash,
@@ -548,7 +653,7 @@ impl WafLogger {
     /// Exports security incidents in RFC-4180 CSV format
     pub fn export_logs_csv(&self, limit: usize) -> String {
         let logs = self.get_logs(limit, None, None);
-        let mut out = String::from("ID,Correlation_ID,Timestamp_UTC,Client_IP,Method,Path,Attack_Type,Rule_ID,Severity,Action_Taken,HTTP_Status,PCI_DSS_Tag,CVSS_Score,Forensic_SHA256,Matched_Trigger\n");
+        let mut out = String::from("ID,Correlation_ID,Timestamp_UTC,Client_IP,Method,Path,Attack_Type,Rule_ID,Severity,Action_Taken,HTTP_Status,PCI_DSS_Tag,CVSS_Score,ASN,AS_Org,IP_Type,Forensic_SHA256,Matched_Trigger\n");
         for l in logs {
             let id = l.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
             let cid = l.get("correlation_id").and_then(|v| v.as_str()).unwrap_or("");
@@ -563,12 +668,15 @@ impl WafLogger {
             let status = l.get("status_code").and_then(|v| v.as_i64()).unwrap_or(0);
             let pci = l.get("pci_tag").and_then(|v| v.as_str()).unwrap_or("");
             let cvss = l.get("cvss_score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let asn = l.get("asn").and_then(|v| v.as_u64()).unwrap_or(0);
+            let as_org = l.get("as_org").and_then(|v| v.as_str()).unwrap_or("").replace('"', "\"\"");
+            let ip_type = l.get("ip_type").and_then(|v| v.as_str()).unwrap_or("");
             let hash = l.get("sha256_hash").and_then(|v| v.as_str()).unwrap_or("");
             let reason = l.get("blocked_reason").and_then(|v| v.as_str()).unwrap_or("").replace('"', "\"\"");
 
             out.push_str(&format!(
-                "{},\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",{},\"{}\",{},\"{}\",\"{}\"\n",
-                id, cid, ts, ip, method, path, attack, rule, sev, act, status, pci, cvss, hash, reason
+                "{},\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",\"{}\",{},\"{}\",{},{},\"{}\",\"{}\",\"{}\",\"{}\"\n",
+                id, cid, ts, ip, method, path, attack, rule, sev, act, status, pci, cvss, asn, as_org, ip_type, hash, reason
             ));
         }
         out
@@ -595,9 +703,10 @@ impl WafLogger {
             let status = l.get("status_code").and_then(|v| v.as_i64()).unwrap_or(200);
             let cid = l.get("correlation_id").and_then(|v| v.as_str()).unwrap_or("");
             let msg = l.get("blocked_reason").and_then(|v| v.as_str()).unwrap_or("Clean Traffic");
+            let asn = l.get("asn").and_then(|v| v.as_u64()).unwrap_or(0);
             out.push_str(&format!(
-                "CEF:0|ROKH-Security|ROKH-WAF|1.0|{}|{}|{}|src={} requestMethod={} request={} act={} outcome={} externalId={} msg={}\n",
-                rule_id, name, severity, src, method, req, act, status, cid, msg
+                "CEF:0|ROKH-Security|ROKH-WAF|1.0|{}|{}|{}|src={} requestMethod={} request={} act={} outcome={} externalId={} msg={} cs1=AS{} cs1Label=SourceASN\n",
+                rule_id, name, severity, src, method, req, act, status, cid, msg, asn
             ));
         }
         out
@@ -659,8 +768,9 @@ fn flush_batch(conn: &mut Connection, batch: &mut Vec<OwnedLogEntry>) {
                 "INSERT INTO waf_logs (
                     timestamp, client_ip, method, path, headers, query_params,
                     body_snippet, attack_type, rule_id, severity, action_taken,
-                    status_code, blocked_reason, country_code, country_name
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                    status_code, blocked_reason, country_code, country_name,
+                    asn, as_org, ip_type
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             ) {
                 Ok(s) => s,
                 Err(e) => {
@@ -687,6 +797,9 @@ fn flush_batch(conn: &mut Connection, batch: &mut Vec<OwnedLogEntry>) {
                     entry.blocked_reason,
                     entry.country_code,
                     entry.country_name,
+                    entry.asn,
+                    entry.as_org,
+                    entry.ip_type,
                 ]);
             }
         }

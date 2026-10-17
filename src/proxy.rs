@@ -22,6 +22,7 @@ pub struct AppState {
     pub antiddos: AntiDdosEngine,
     pub logger: WafLogger,
     pub http_client: reqwest::Client,
+    pub load_balancer: Arc<crate::loadbalancer::LoadBalancer>,
     pub ai: Arc<NeuralBrain>,
     pub metrics_requests_total: AtomicU64,
     pub metrics_blocked_threats: AtomicU64,
@@ -174,7 +175,8 @@ pub async fn proxy_handler(
     let client_ip = if is_trusted_peer {
         parts
             .headers
-            .get("x-forwarded-for")
+            .get("cf-connecting-ip")
+            .or_else(|| parts.headers.get("x-forwarded-for"))
             .and_then(|h| h.to_str().ok())
             .and_then(|s| s.split(',').next())
             .map(|s| s.trim().to_string())
@@ -226,6 +228,134 @@ pub async fn proxy_handler(
             geo_stats.to_string(),
         )
             .into_response();
+    }
+
+    // 1.055 Geo-Fencing & Datacenter ASN Defense Policy API
+    if path == "/api/geo/policy" {
+        if method == "POST" {
+            let bytes = match to_bytes(body, state.config.max_body_size_bytes).await {
+                Ok(b) => b,
+                Err(_) => Bytes::new(),
+            };
+            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                let block_dc = v.get("block_datacenter_ips").and_then(|b| b.as_bool()).unwrap_or(false);
+                let block_tor = v.get("block_tor_nodes").and_then(|b| b.as_bool()).unwrap_or(true);
+                let mode = v.get("geofence_mode").and_then(|s| s.as_str()).unwrap_or("OFF");
+                let countries = v.get("geofence_countries").and_then(|s| s.as_str()).unwrap_or("IR");
+                let _ = state.logger.set_geo_policy(block_dc, block_tor, mode, countries);
+                return (
+                    StatusCode::OK,
+                    [("Content-Type", "application/json")],
+                    json!({"status": "SUCCESS", "message": "Perimeter network policy updated"}).to_string(),
+                )
+                    .into_response();
+            }
+            return (StatusCode::BAD_REQUEST, [("Content-Type", "application/json")], json!({"error": "Invalid payload"}).to_string()).into_response();
+        } else {
+            let pol = state.logger.get_geo_policy();
+            return (StatusCode::OK, [("Content-Type", "application/json")], pol.to_string()).into_response();
+        }
+    }
+
+    // 1.056 Upstream Backends, Load Balancer & Circuit Breaker APIs
+    if path == "/api/backends" {
+        let status = state.load_balancer.get_status().await;
+        return (
+            StatusCode::OK,
+            [("Content-Type", "application/json")],
+            status.to_string(),
+        )
+            .into_response();
+    }
+
+    if path == "/api/backends/add" && method == "POST" {
+        let bytes = match to_bytes(body, state.config.max_body_size_bytes).await {
+            Ok(b) => b,
+            Err(_) => Bytes::new(),
+        };
+        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+            let url = v.get("url").and_then(|s| s.as_str()).unwrap_or("");
+            let weight = v.get("weight").and_then(|w| w.as_u64()).unwrap_or(1) as u32;
+            match state.load_balancer.add_node(url, weight).await {
+                Ok(node) => {
+                    return (
+                        StatusCode::CREATED,
+                        [("Content-Type", "application/json")],
+                        json!({"status": "SUCCESS", "node": node}).to_string(),
+                    )
+                        .into_response();
+                }
+                Err(err) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        [("Content-Type", "application/json")],
+                        json!({"error": err}).to_string(),
+                    )
+                        .into_response();
+                }
+            }
+        }
+        return (StatusCode::BAD_REQUEST, [("Content-Type", "application/json")], json!({"error": "Invalid payload"}).to_string()).into_response();
+    }
+
+    if (path == "/api/backends/remove" || path == "/api/backends") && (method == "POST" || method == "DELETE") {
+        let id_to_remove = if let Some(q) = query_string.as_deref() {
+            q.split('&').find_map(|p| {
+                let mut kv = p.splitn(2, '=');
+                if kv.next()? == "id" {
+                    Some(kv.next().unwrap_or("").to_string())
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
+        };
+
+        let target_id = if let Some(id) = id_to_remove {
+            id
+        } else {
+            let bytes = match to_bytes(body, state.config.max_body_size_bytes).await {
+                Ok(b) => b,
+                Err(_) => Bytes::new(),
+            };
+            serde_json::from_slice::<serde_json::Value>(&bytes)
+                .ok()
+                .and_then(|v| {
+                    v.get("id")
+                        .or_else(|| v.get("url"))
+                        .and_then(|s| s.as_str())
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_default()
+        };
+
+        let removed = state.load_balancer.remove_node(&target_id).await;
+        return (
+            StatusCode::OK,
+            [("Content-Type", "application/json")],
+            json!({"status": if removed { "SUCCESS" } else { "NOT_FOUND" }, "id": target_id}).to_string(),
+        )
+            .into_response();
+    }
+
+    if path == "/api/backends/algorithm" && method == "POST" {
+        let bytes = match to_bytes(body, state.config.max_body_size_bytes).await {
+            Ok(b) => b,
+            Err(_) => Bytes::new(),
+        };
+        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+            let algo_str = v.get("algorithm").and_then(|s| s.as_str()).unwrap_or("RoundRobin");
+            let algo = crate::loadbalancer::BalancingAlgorithm::from_str_name(algo_str);
+            state.load_balancer.set_algorithm(algo).await;
+            return (
+                StatusCode::OK,
+                [("Content-Type", "application/json")],
+                json!({"status": "SUCCESS", "algorithm": algo.as_str()}).to_string(),
+            )
+                .into_response();
+        }
+        return (StatusCode::BAD_REQUEST, [("Content-Type", "application/json")], json!({"error": "Invalid payload"}).to_string()).into_response();
     }
 
     if path == "/api/logs" {
@@ -781,6 +911,9 @@ pub async fn proxy_handler(
             blocked_reason: Some("DDoS Flood Protection: Client IP Jailed"),
             country_code: &geo_loc.country_code,
             country_name: &geo_loc.country_name,
+            asn: geo_loc.asn,
+            as_org: &geo_loc.as_org,
+            ip_type: &geo_loc.ip_type,
         });
 
         let retry_str = remaining_secs.to_string();
@@ -834,6 +967,227 @@ pub async fn proxy_handler(
             DdosVerdict::Challenge(res) => res,
             _ => (StatusCode::BAD_REQUEST, "Invalid verification request").into_response(),
         };
+    }
+
+    // 2.0 Network Intelligence & Perimeter Defense Policy (Datacenter ASN, Tor Relays, Geo-Fencing)
+    let geo_policy = state.logger.get_geo_policy();
+    let block_dc = geo_policy.get("block_datacenter_ips").and_then(|v| v.as_bool()).unwrap_or(false);
+    let block_tor = geo_policy.get("block_tor_nodes").and_then(|v| v.as_bool()).unwrap_or(true);
+    let geofence_mode = geo_policy.get("geofence_mode").and_then(|v| v.as_str()).unwrap_or("OFF");
+    let geofence_countries = geo_policy.get("geofence_countries").and_then(|v| v.as_str()).unwrap_or("IR");
+
+    // A. Tor Exit Node / Anonymizer Block
+    if block_tor && geo_loc.is_tor {
+        state.metrics_blocked_threats.fetch_add(1, Ordering::Relaxed);
+        let incident_id = format!("TOR-BLOCK-{}", &chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+        let reason = format!("Tor Anonymous Exit Relay (AS{} - {}) Blocked by Perimeter Policy", geo_loc.asn, geo_loc.as_org);
+        state.logger.log_event(LogEntry {
+            client_ip: &client_ip,
+            method: &method,
+            path: &path,
+            headers: &headers_json,
+            query_params: query_string.as_deref(),
+            body_snippet: None,
+            attack_type: "TOR_EXIT_NODE_BLOCK",
+            rule_id: "ROKH-GEO-TOR-001",
+            severity: "HIGH",
+            action_taken: "BLOCKED",
+            status_code: 403,
+            blocked_reason: Some(&reason),
+            country_code: &geo_loc.country_code,
+            country_name: &geo_loc.country_name,
+            asn: geo_loc.asn,
+            as_org: &geo_loc.as_org,
+            ip_type: &geo_loc.ip_type,
+        });
+
+        if is_html_client {
+            let html_body = crate::pages::render_security_block_page(
+                &incident_id,
+                &client_ip,
+                "TOR_EXIT_NODE_BLOCK",
+                "ROKH-GEO-TOR-001",
+                "HIGH",
+                &reason,
+                403,
+                "اتصال از طریق رله‌های خروجی ناشناس‌ساز تور (Tor Network) بر اساس الزامات امنیتی بانکداری الکترونیک مسدود شده است.",
+            );
+            return (StatusCode::FORBIDDEN, [("Content-Type", "text/html; charset=utf-8")], html_body).into_response();
+        }
+
+        return (
+            StatusCode::FORBIDDEN,
+            [("Content-Type", "application/json")],
+            json!({
+                "waf": "ROKH WAF v1.0",
+                "status": "BLOCKED",
+                "attack_type": "TOR_EXIT_NODE_BLOCK",
+                "asn": geo_loc.asn,
+                "as_org": geo_loc.as_org,
+                "message": reason
+            }).to_string(),
+        ).into_response();
+    }
+
+    // B. Cloud & Datacenter ASN Block (Bot/Scraper Prevention)
+    if block_dc && geo_loc.is_datacenter && geo_loc.country_code != "LOCAL" && geo_loc.country_code != "LAN" {
+        state.metrics_blocked_threats.fetch_add(1, Ordering::Relaxed);
+        let incident_id = format!("DC-BLOCK-{}", &chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+        let reason = format!("Direct API call from Hosting/Datacenter ASN (AS{} - {}) rejected by Anti-Bot Policy", geo_loc.asn, geo_loc.as_org);
+        state.logger.log_event(LogEntry {
+            client_ip: &client_ip,
+            method: &method,
+            path: &path,
+            headers: &headers_json,
+            query_params: query_string.as_deref(),
+            body_snippet: None,
+            attack_type: "DATACENTER_IP_BLOCK",
+            rule_id: "ROKH-GEO-DC-002",
+            severity: "HIGH",
+            action_taken: "BLOCKED",
+            status_code: 403,
+            blocked_reason: Some(&reason),
+            country_code: &geo_loc.country_code,
+            country_name: &geo_loc.country_name,
+            asn: geo_loc.asn,
+            as_org: &geo_loc.as_org,
+            ip_type: &geo_loc.ip_type,
+        });
+
+        if is_html_client {
+            let html_body = crate::pages::render_security_block_page(
+                &incident_id,
+                &client_ip,
+                "DATACENTER_IP_BLOCK",
+                "ROKH-GEO-DC-002",
+                "HIGH",
+                &reason,
+                403,
+                "درخواست‌های مستقیم از دیتاسنترها و سرورهای ابری جهت پیشگیری از بات‌ها و ابزارهای اتوماتیک مسدود گردیده است.",
+            );
+            return (StatusCode::FORBIDDEN, [("Content-Type", "text/html; charset=utf-8")], html_body).into_response();
+        }
+
+        return (
+            StatusCode::FORBIDDEN,
+            [("Content-Type", "application/json")],
+            json!({
+                "waf": "ROKH WAF v1.0",
+                "status": "BLOCKED",
+                "attack_type": "DATACENTER_IP_BLOCK",
+                "asn": geo_loc.asn,
+                "as_org": geo_loc.as_org,
+                "message": reason
+            }).to_string(),
+        ).into_response();
+    }
+
+    // C. Geographic Fencing Policy
+    let is_foreign = geo_loc.country_code != "LOCAL" && geo_loc.country_code != "LAN";
+    if (geofence_mode == "ALLOW_ONLY" || geofence_mode.eq_ignore_ascii_case("whitelist_only")) && is_foreign {
+        let allowed_list: Vec<&str> = geofence_countries.split(',').map(|s| s.trim()).collect();
+        if !allowed_list.contains(&geo_loc.country_code.as_str()) {
+            state.metrics_blocked_threats.fetch_add(1, Ordering::Relaxed);
+            let incident_id = format!("GEO-FENCE-{}", &chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+            let reason = format!("Origin country {} is not authorized by Geo-Fencing whitelist ({})", geo_loc.country_code, geofence_countries);
+            state.logger.log_event(LogEntry {
+                client_ip: &client_ip,
+                method: &method,
+                path: &path,
+                headers: &headers_json,
+                query_params: query_string.as_deref(),
+                body_snippet: None,
+                attack_type: "GEOFENCE_VIOLATION",
+                rule_id: "ROKH-GEO-FENCE-003",
+                severity: "MEDIUM",
+                action_taken: "BLOCKED",
+                status_code: 403,
+                blocked_reason: Some(&reason),
+                country_code: &geo_loc.country_code,
+                country_name: &geo_loc.country_name,
+                asn: geo_loc.asn,
+                as_org: &geo_loc.as_org,
+                ip_type: &geo_loc.ip_type,
+            });
+
+            if is_html_client {
+                let html_body = crate::pages::render_security_block_page(
+                    &incident_id,
+                    &client_ip,
+                    "GEOFENCE_VIOLATION",
+                    "ROKH-GEO-FENCE-003",
+                    "MEDIUM",
+                    &reason,
+                    403,
+                    "دسترسی از مبدا جغرافیایی شما بر اساس سیاست‌های منطقه‌ای فایروال مجاز نمی‌باشد.",
+                );
+                return (StatusCode::FORBIDDEN, [("Content-Type", "text/html; charset=utf-8")], html_body).into_response();
+            }
+
+            return (
+                StatusCode::FORBIDDEN,
+                [("Content-Type", "application/json")],
+                json!({
+                    "waf": "ROKH WAF v1.0",
+                    "status": "BLOCKED",
+                    "attack_type": "GEOFENCE_VIOLATION",
+                    "country": geo_loc.country_code,
+                    "message": reason
+                }).to_string(),
+            ).into_response();
+        }
+    } else if (geofence_mode == "BLOCK_ONLY" || geofence_mode.eq_ignore_ascii_case("blacklist")) && is_foreign {
+        let blocked_list: Vec<&str> = geofence_countries.split(',').map(|s| s.trim()).collect();
+        if blocked_list.contains(&geo_loc.country_code.as_str()) {
+            state.metrics_blocked_threats.fetch_add(1, Ordering::Relaxed);
+            let incident_id = format!("GEO-FENCE-{}", &chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+            let reason = format!("Origin country {} is explicitly forbidden by Geo-Fencing blacklist ({})", geo_loc.country_code, geofence_countries);
+            state.logger.log_event(LogEntry {
+                client_ip: &client_ip,
+                method: &method,
+                path: &path,
+                headers: &headers_json,
+                query_params: query_string.as_deref(),
+                body_snippet: None,
+                attack_type: "GEOFENCE_VIOLATION",
+                rule_id: "ROKH-GEO-FENCE-004",
+                severity: "MEDIUM",
+                action_taken: "BLOCKED",
+                status_code: 403,
+                blocked_reason: Some(&reason),
+                country_code: &geo_loc.country_code,
+                country_name: &geo_loc.country_name,
+                asn: geo_loc.asn,
+                as_org: &geo_loc.as_org,
+                ip_type: &geo_loc.ip_type,
+            });
+
+            if is_html_client {
+                let html_body = crate::pages::render_security_block_page(
+                    &incident_id,
+                    &client_ip,
+                    "GEOFENCE_VIOLATION",
+                    "ROKH-GEO-FENCE-004",
+                    "MEDIUM",
+                    &reason,
+                    403,
+                    "دسترسی از کشور شما در فهرست سیاه منطقه‌ای قرار دارد.",
+                );
+                return (StatusCode::FORBIDDEN, [("Content-Type", "text/html; charset=utf-8")], html_body).into_response();
+            }
+
+            return (
+                StatusCode::FORBIDDEN,
+                [("Content-Type", "application/json")],
+                json!({
+                    "waf": "ROKH WAF v1.0",
+                    "status": "BLOCKED",
+                    "attack_type": "GEOFENCE_VIOLATION",
+                    "country": geo_loc.country_code,
+                    "message": reason
+                }).to_string(),
+            ).into_response();
+        }
     }
 
     // 2.9 Anti-HTTP Request Smuggling & Desync Shield (RFC 7230 §3.3.3 / RFC 9110)
@@ -942,6 +1296,9 @@ pub async fn proxy_handler(
                     blocked_reason: Some(rule_name),
                     country_code: &geo_loc.country_code,
                     country_name: &geo_loc.country_name,
+                    asn: geo_loc.asn,
+                    as_org: &geo_loc.as_org,
+                    ip_type: &geo_loc.ip_type,
                 });
                 return (
                     StatusCode::FORBIDDEN,
@@ -1159,6 +1516,9 @@ pub async fn proxy_handler(
                 blocked_reason: Some("DDoS Flood Protection: Client IP Jailed"),
                 country_code: &geo_loc.country_code,
                 country_name: &geo_loc.country_name,
+                asn: geo_loc.asn,
+                as_org: &geo_loc.as_org,
+                ip_type: &geo_loc.ip_type,
             });
 
             let retry_str = remaining_secs.to_string();
@@ -1225,6 +1585,9 @@ pub async fn proxy_handler(
         blocked_reason: None,
         country_code: &geo_loc.country_code,
         country_name: &geo_loc.country_name,
+        asn: geo_loc.asn,
+        as_org: &geo_loc.as_org,
+        ip_type: &geo_loc.ip_type,
     });
 
     // 7.5 Built-in Mock Target endpoints (Simulated Demo Backend)
@@ -1319,6 +1682,9 @@ async fn handle_threat_response(
         blocked_reason: Some(&detection.matched_pattern),
         country_code: &geo_loc.country_code,
         country_name: &geo_loc.country_name,
+        asn: geo_loc.asn,
+        as_org: &geo_loc.as_org,
+        ip_type: &geo_loc.ip_type,
     });
 
     if current_mode == WafMode::Prevention {
@@ -1331,6 +1697,9 @@ async fn handle_threat_response(
             "severity": detection.severity,
             "client_ip": client_ip,
             "country": geo_loc.country_code,
+            "asn": geo_loc.asn,
+            "as_org": geo_loc.as_org,
+            "ip_type": geo_loc.ip_type,
             "matched_trigger": detection.matched_pattern,
             "message": "Access Denied: Malicious request blocked by ROKH WAF Security Core."
         });
@@ -1386,7 +1755,32 @@ async fn forward_to_backend(
     body: Bytes,
     client_ip: &str,
 ) -> Response {
-    let mut target_url = format!("{}{}", state.config.backend_url, path);
+    // 1. Select healthy upstream backend node through Load Balancer & Circuit Breaker
+    let chosen_node = match state.load_balancer.select_backend(client_ip).await {
+        Some(node) => node,
+        None => {
+            // All upstream backends are DOWN or their Circuit Breakers are OPEN!
+            let err_body = json!({
+                "waf": "ROKH WAF v1.0",
+                "error": "Service Unavailable",
+                "circuit_breaker": "OPEN_OR_ALL_DOWN",
+                "message": "All upstream banking core backends are unreachable or circuit breakers are open. Automatic fail-safe engaged.",
+                "retry_after_seconds": 5
+            });
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [
+                    ("Content-Type", "application/json"),
+                    ("Retry-After", "5"),
+                    ("X-Circuit-Breaker-Status", "TRIPPED_ALL_DOWN"),
+                ],
+                err_body.to_string(),
+            )
+                .into_response();
+        }
+    };
+
+    let mut target_url = format!("{}{}", chosen_node.url, path);
     if let Some(q) = query {
         target_url.push('?');
         target_url.push_str(q);
@@ -1411,14 +1805,21 @@ async fn forward_to_backend(
     req_builder = req_builder
         .header("X-Forwarded-For", client_ip)
         .header("X-Real-IP", client_ip)
-        .header("X-Forwarded-Proto", "http");
+        .header("X-Forwarded-Proto", "http")
+        .header("X-Upstream-Backend", &chosen_node.id);
 
-    req_builder = req_builder.body(body);
+    req_builder = req_builder.body(body.clone());
 
+    let start_time = std::time::Instant::now();
     match req_builder.send().await {
         Ok(backend_res) => {
+            let latency_ms = start_time.elapsed().as_millis() as u64;
             let status = StatusCode::from_u16(backend_res.status().as_u16())
                 .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+
+            // Record success in load balancer
+            let is_success = status.as_u16() < 500;
+            state.load_balancer.record_outcome(&chosen_node.id, is_success, latency_ms, None).await;
 
             let mut response_builder = Response::builder().status(status);
 
@@ -1429,11 +1830,13 @@ async fn forward_to_backend(
                 }
             }
 
-            // Inject security headers on outgoing traffic
+            // Inject security and upstream headers
             response_builder = response_builder
                 .header("X-Protected-By", "ROKH-WAF/1.0")
                 .header("X-Content-Type-Options", "nosniff")
-                .header("X-Frame-Options", "DENY");
+                .header("X-Frame-Options", "DENY")
+                .header("X-Upstream-Node", chosen_node.id.as_str())
+                .header("X-Upstream-Latency", format!("{}ms", latency_ms));
 
             let res_bytes = backend_res.bytes().await.unwrap_or_default();
             response_builder
@@ -1441,10 +1844,74 @@ async fn forward_to_backend(
                 .unwrap_or_else(|_| (StatusCode::BAD_GATEWAY, "Response Build Error").into_response())
         }
         Err(err) => {
+            let latency_ms = start_time.elapsed().as_millis() as u64;
+            let err_desc = err.to_string();
+
+            // Record failure in circuit breaker
+            state.load_balancer.record_outcome(&chosen_node.id, false, latency_ms, Some(&err_desc)).await;
+
+            // Attempt automatic failover to another healthy backend node if available!
+            if let Some(fallback_node) = state.load_balancer.select_backend(client_ip).await {
+                if fallback_node.id != chosen_node.id {
+                    let mut fallback_url = format!("{}{}", fallback_node.url, path);
+                    if let Some(q) = query {
+                        fallback_url.push('?');
+                        fallback_url.push_str(q);
+                    }
+
+                    let mut retry_builder = state.http_client.request(
+                        reqwest::Method::from_bytes(method.as_str().as_bytes()).unwrap(),
+                        &fallback_url,
+                    );
+                    for (name, val) in headers.iter() {
+                        let name_str = name.as_str().to_lowercase();
+                        if name_str != "host" && name_str != "connection" && name_str != "transfer-encoding" {
+                            if let Ok(v) = val.to_str() {
+                                retry_builder = retry_builder.header(name.as_str(), v);
+                            }
+                        }
+                    }
+                    retry_builder = retry_builder
+                        .header("X-Forwarded-For", client_ip)
+                        .header("X-Real-IP", client_ip)
+                        .header("X-Upstream-Backend", &fallback_node.id)
+                        .header("X-WAF-Failover", "true")
+                        .body(body);
+
+                    let retry_start = std::time::Instant::now();
+                    if let Ok(retry_res) = retry_builder.send().await {
+                        let retry_latency = retry_start.elapsed().as_millis() as u64;
+                        let status = StatusCode::from_u16(retry_res.status().as_u16())
+                            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+                        state.load_balancer.record_outcome(&fallback_node.id, status.as_u16() < 500, retry_latency, None).await;
+
+                        let mut res_builder = Response::builder().status(status);
+                        for (k, v) in retry_res.headers() {
+                            let k_str = k.as_str().to_lowercase();
+                            if k_str != "connection" && k_str != "transfer-encoding" {
+                                res_builder = res_builder.header(k.as_str(), v.as_bytes());
+                            }
+                        }
+                        res_builder = res_builder
+                            .header("X-Protected-By", "ROKH-WAF/1.0")
+                            .header("X-Upstream-Node", fallback_node.id.as_str())
+                            .header("X-Upstream-Failover-From", chosen_node.id.as_str())
+                            .header("X-Upstream-Latency", format!("{}ms", retry_latency));
+
+                        let res_bytes = retry_res.bytes().await.unwrap_or_default();
+                        return res_builder.body(Body::from(res_bytes)).unwrap_or_else(|_| (StatusCode::BAD_GATEWAY, "Response Build Error").into_response());
+                    } else {
+                        state.load_balancer.record_outcome(&fallback_node.id, false, retry_start.elapsed().as_millis() as u64, Some("Failover node also failed")).await;
+                    }
+                }
+            }
+
             let err_body = json!({
                 "waf": "ROKH WAF v1.0",
                 "error": "Bad Gateway",
-                "message": format!("Backend service unavailable at {}: {}", target_url, err)
+                "primary_backend": chosen_node.url,
+                "circuit_state": chosen_node.circuit_state.as_str(),
+                "message": format!("Upstream service at {} unreachable: {}. Circuit breaker updated.", chosen_node.url, err_desc)
             });
             (
                 StatusCode::BAD_GATEWAY,

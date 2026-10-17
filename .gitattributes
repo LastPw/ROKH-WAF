@@ -1,0 +1,25 @@
+# ==============================================================================
+# ROKH WAF - GitHub Linguist Configuration (Pure 100% Rust Repository)
+# ==============================================================================
+
+# Embedded web assets & markup
+*.html linguist-detectable=false
+src/soc_dashboard.html linguist-detectable=false
+
+# Launchers and shell scripts
+*.ps1 linguist-detectable=false
+*.sh linguist-detectable=false
+
+# Embedded weights & signature data
+*.json linguist-detectable=false
+*.txt linguist-detectable=false
+src/waf_brain_weights.json linguist-detectable=false
+data/signatures/* linguist-detectable=false
+
+# CI & configs
+*.yml linguist-detectable=false
+*.yaml linguist-detectable=false
+*.toml linguist-detectable=false
+
+# Documentation
+*.md linguist-documentation=true

@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::time::Instant;
 
-const EMBEDDED_WEIGHTS_JSON: &str = include_str!("../ai_engine/waf_brain_weights.json");
+const EMBEDDED_WEIGHTS_JSON: &str = include_str!("waf_brain_weights.json");
 
 const DANGEROUS_SYMBOLS: &str = "'\"<>;|`()${}[]!*^~\\";
 

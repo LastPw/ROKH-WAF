@@ -51,6 +51,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     let http_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
+        .pool_max_idle_per_host(256)
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
+        .tcp_nodelay(true)
         .build()?;
 
     let state = Arc::new(AppState {

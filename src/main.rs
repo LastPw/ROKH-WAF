@@ -2,6 +2,7 @@ mod ai;
 mod antiddos;
 mod config;
 mod deobfuscator;
+mod geoip;
 mod logger;
 mod pages;
 mod proxy;

@@ -20,6 +20,8 @@ pub struct OwnedLogEntry {
     pub action_taken: String,
     pub status_code: i32,
     pub blocked_reason: Option<String>,
+    pub country_code: String,
+    pub country_name: String,
 }
 
 pub struct LogEntry<'a> {
@@ -35,6 +37,8 @@ pub struct LogEntry<'a> {
     pub action_taken: &'a str,
     pub status_code: i32,
     pub blocked_reason: Option<&'a str>,
+    pub country_code: &'a str,
+    pub country_name: &'a str,
 }
 
 pub struct WafLogger {
@@ -67,11 +71,14 @@ impl WafLogger {
                  severity TEXT NOT NULL,
                  action_taken TEXT NOT NULL,
                  status_code INTEGER NOT NULL,
-                 blocked_reason TEXT
+                 blocked_reason TEXT,
+                 country_code TEXT DEFAULT 'LOCAL',
+                 country_name TEXT DEFAULT 'Localhost'
              );
              CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON waf_logs(timestamp);
              CREATE INDEX IF NOT EXISTS idx_logs_attack_type ON waf_logs(attack_type);
              CREATE INDEX IF NOT EXISTS idx_logs_action ON waf_logs(action_taken);
+             
 
              CREATE TABLE IF NOT EXISTS waf_config (
                  key TEXT PRIMARY KEY,
@@ -90,6 +97,11 @@ impl WafLogger {
                  created_at TEXT NOT NULL
              );",
         )?;
+
+        // Ensure backward-compatible migrations for existing databases
+        let _ = conn.execute("ALTER TABLE waf_logs ADD COLUMN country_code TEXT DEFAULT 'LOCAL'", []);
+        let _ = conn.execute("ALTER TABLE waf_logs ADD COLUMN country_name TEXT DEFAULT 'Localhost'", []);
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_country ON waf_logs(country_code)", []);
 
         // Seed initial enterprise banking rules if table is newly initialized
         let count_rules: i64 = conn.query_row("SELECT COUNT(*) FROM waf_custom_rules", [], |r| r.get(0)).unwrap_or(0);
@@ -185,6 +197,8 @@ impl WafLogger {
             action_taken: entry.action_taken.to_string(),
             status_code: entry.status_code,
             blocked_reason: entry.blocked_reason.map(|s| s.to_string()),
+            country_code: entry.country_code.to_string(),
+            country_name: entry.country_name.to_string(),
         };
 
         // Try sending into channel without blocking Tokio worker threads
@@ -254,6 +268,8 @@ impl WafLogger {
             0.0
         };
 
+        let geo_stats = self.get_geo_stats();
+
         serde_json::json!({
             "total_inspected": total,
             "blocked": blocked,
@@ -261,28 +277,89 @@ impl WafLogger {
             "flagged": flagged,
             "block_ratio": ratio,
             "threat_breakdown": threat_breakdown,
-            "top_attackers": top_attackers
+            "top_attackers": top_attackers,
+            "top_countries": geo_stats
         })
     }
 
+    /// Returns aggregated country-by-country traffic and threat analytics for World Map
+    pub fn get_geo_stats(&self) -> serde_json::Value {
+        let conn = match Connection::open(&self.db_path) {
+            Ok(c) => c,
+            Err(_) => return serde_json::json!([]),
+        };
+
+        let mut list = Vec::new();
+        let query = "SELECT 
+            COALESCE(country_code, 'LOCAL') as code, 
+            COALESCE(country_name, 'Localhost') as name, 
+            COUNT(*) as total_reqs, 
+            SUM(CASE WHEN action_taken = 'BLOCKED' THEN 1 ELSE 0 END) as blocked_reqs
+            FROM waf_logs 
+            GROUP BY code 
+            ORDER BY total_reqs DESC";
+
+        if let Ok(mut stmt) = conn.prepare(query) {
+            if let Ok(rows) = stmt.query_map([], |row| {
+                let code: String = row.get(0)?;
+                let name: String = row.get(1)?;
+                let total: i64 = row.get(2)?;
+                let blocked: i64 = row.get(3)?;
+                Ok((code, name, total, blocked))
+            }) {
+                for item in rows.flatten() {
+                    let (code, name, total, blocked) = item;
+                    let geo = crate::geoip::GeoResolver::build_from_code(&code, false);
+                    list.push(serde_json::json!({
+                        "country_code": code,
+                        "country_name": name,
+                        "flag": geo.flag,
+                        "continent": geo.continent,
+                        "latitude": geo.latitude,
+                        "longitude": geo.longitude,
+                        "total": total,
+                        "blocked": blocked,
+                        "passed": total - blocked,
+                        "block_ratio": if total > 0 { ((blocked as f64 / total as f64) * 1000.0).round() / 10.0 } else { 0.0 }
+                    }));
+                }
+            }
+        }
+
+        serde_json::json!(list)
+    }
+
     /// Retrieves paginated security incidents for SOC stream with banking forensics & compliance tags
-    pub fn get_logs(&self, limit: usize, attack_type: Option<&str>) -> Vec<serde_json::Value> {
+    pub fn get_logs(&self, limit: usize, attack_type: Option<&str>, country: Option<&str>) -> Vec<serde_json::Value> {
         let conn = match Connection::open(&self.db_path) {
             Ok(c) => c,
             Err(_) => return Vec::new(),
         };
 
-        let mut logs = Vec::new();
-        let query = if let Some(at) = attack_type {
+        let mut conditions = Vec::new();
+        if let Some(at) = attack_type {
             if at != "ALL" && !at.is_empty() {
-                format!("SELECT id, timestamp, client_ip, method, path, attack_type, rule_id, severity, action_taken, status_code, blocked_reason, query_params, body_snippet, headers FROM waf_logs WHERE attack_type = '{}' ORDER BY id DESC LIMIT {}", at.replace('\'', "''"), limit)
-            } else {
-                format!("SELECT id, timestamp, client_ip, method, path, attack_type, rule_id, severity, action_taken, status_code, blocked_reason, query_params, body_snippet, headers FROM waf_logs ORDER BY id DESC LIMIT {}", limit)
+                conditions.push(format!("attack_type = '{}'", at.replace('\'', "''")));
             }
+        }
+        if let Some(c) = country {
+            if c != "ALL" && !c.is_empty() {
+                conditions.push(format!("country_code = '{}'", c.replace('\'', "''")));
+            }
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
         } else {
-            format!("SELECT id, timestamp, client_ip, method, path, attack_type, rule_id, severity, action_taken, status_code, blocked_reason, query_params, body_snippet, headers FROM waf_logs ORDER BY id DESC LIMIT {}", limit)
+            format!("WHERE {}", conditions.join(" AND "))
         };
 
+        let query = format!(
+            "SELECT id, timestamp, client_ip, method, path, attack_type, rule_id, severity, action_taken, status_code, blocked_reason, query_params, body_snippet, headers, COALESCE(country_code, 'LOCAL'), COALESCE(country_name, 'Localhost') FROM waf_logs {} ORDER BY id DESC LIMIT {}",
+            where_clause, limit
+        );
+
+        let mut logs = Vec::new();
         if let Ok(mut stmt) = conn.prepare(&query) {
             let rows = stmt.query_map([], |row| {
                 let id: i64 = row.get(0)?;
@@ -299,6 +376,9 @@ impl WafLogger {
                 let query_params: Option<String> = row.get(11)?;
                 let body_snippet: Option<String> = row.get(12)?;
                 let headers: Option<String> = row.get(13)?;
+                let country_code: String = row.get(14).unwrap_or_else(|_| "LOCAL".to_string());
+                let country_name: String = row.get(15).unwrap_or_else(|_| "Localhost".to_string());
+                let geo = crate::geoip::GeoResolver::build_from_code(&country_code, false);
 
                 let pci_tag = match attack_type.as_str() {
                     "SQL_INJECTION" => "PCI-DSS 4.0:Req-6.4.1 | OWASP:A03",
@@ -346,6 +426,9 @@ impl WafLogger {
                     "query_params": query_params,
                     "body_snippet": body_snippet,
                     "headers": headers.unwrap_or_else(|| "{}".to_string()),
+                    "country_code": country_code,
+                    "country_name": country_name,
+                    "country_flag": geo.flag,
                     "pci_tag": pci_tag,
                     "cvss_score": cvss_score,
                     "sha256_hash": sha256_hash,
@@ -464,7 +547,7 @@ impl WafLogger {
 
     /// Exports security incidents in RFC-4180 CSV format
     pub fn export_logs_csv(&self, limit: usize) -> String {
-        let logs = self.get_logs(limit, None);
+        let logs = self.get_logs(limit, None, None);
         let mut out = String::from("ID,Correlation_ID,Timestamp_UTC,Client_IP,Method,Path,Attack_Type,Rule_ID,Severity,Action_Taken,HTTP_Status,PCI_DSS_Tag,CVSS_Score,Forensic_SHA256,Matched_Trigger\n");
         for l in logs {
             let id = l.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
@@ -493,7 +576,7 @@ impl WafLogger {
 
     /// Exports security incidents in ArcSight Common Event Format (CEF) for Bank SIEMs (Splunk, QRadar)
     pub fn export_logs_cef(&self, limit: usize) -> String {
-        let logs = self.get_logs(limit, None);
+        let logs = self.get_logs(limit, None, None);
         let mut out = String::new();
         for l in logs {
             let rule_id = l.get("rule_id").and_then(|v| v.as_str()).unwrap_or("ROKH-GENERIC");
@@ -576,8 +659,8 @@ fn flush_batch(conn: &mut Connection, batch: &mut Vec<OwnedLogEntry>) {
                 "INSERT INTO waf_logs (
                     timestamp, client_ip, method, path, headers, query_params,
                     body_snippet, attack_type, rule_id, severity, action_taken,
-                    status_code, blocked_reason
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                    status_code, blocked_reason, country_code, country_name
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             ) {
                 Ok(s) => s,
                 Err(e) => {
@@ -602,6 +685,8 @@ fn flush_batch(conn: &mut Connection, batch: &mut Vec<OwnedLogEntry>) {
                     entry.action_taken,
                     entry.status_code,
                     entry.blocked_reason,
+                    entry.country_code,
+                    entry.country_name,
                 ]);
             }
         }

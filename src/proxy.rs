@@ -183,6 +183,8 @@ pub async fn proxy_handler(
         addr.ip().to_string()
     };
 
+    let geo_loc = crate::geoip::GeoResolver::resolve(&client_ip, &parts.headers);
+
     let method = parts.method.to_string();
     let path = parts.uri.path().to_string();
     let query_string = parts.uri.query().map(|q| q.to_string());
@@ -216,6 +218,16 @@ pub async fn proxy_handler(
             .into_response();
     }
 
+    if path == "/api/geo-stats" {
+        let geo_stats = state.logger.get_geo_stats();
+        return (
+            StatusCode::OK,
+            [("Content-Type", "application/json")],
+            geo_stats.to_string(),
+        )
+            .into_response();
+    }
+
     if path == "/api/logs" {
         let limit = query_string
             .as_deref()
@@ -242,7 +254,18 @@ pub async fn proxy_handler(
             })
         });
 
-        let logs = state.logger.get_logs(limit, attack_type);
+        let country = query_string.as_deref().and_then(|q| {
+            q.split('&').find_map(|pair| {
+                let mut kv = pair.splitn(2, '=');
+                if kv.next()? == "country" {
+                    Some(kv.next().unwrap_or("ALL"))
+                } else {
+                    None
+                }
+            })
+        });
+
+        let logs = state.logger.get_logs(limit, attack_type, country);
         return (
             StatusCode::OK,
             [("Content-Type", "application/json")],
@@ -499,7 +522,7 @@ pub async fn proxy_handler(
             )
                 .into_response();
         } else if format == "json" {
-            let logs = state.logger.get_logs(5000, None);
+            let logs = state.logger.get_logs(5000, None, None);
             return (
                 StatusCode::OK,
                 [
@@ -756,6 +779,8 @@ pub async fn proxy_handler(
             action_taken: "BLOCKED",
             status_code: 429,
             blocked_reason: Some("DDoS Flood Protection: Client IP Jailed"),
+            country_code: &geo_loc.country_code,
+            country_name: &geo_loc.country_name,
         });
 
         let retry_str = remaining_secs.to_string();
@@ -915,6 +940,8 @@ pub async fn proxy_handler(
                     action_taken: "BLOCKED",
                     status_code: 403,
                     blocked_reason: Some(rule_name),
+                    country_code: &geo_loc.country_code,
+                    country_name: &geo_loc.country_name,
                 });
                 return (
                     StatusCode::FORBIDDEN,
@@ -1130,6 +1157,8 @@ pub async fn proxy_handler(
                 action_taken: "BLOCKED",
                 status_code: 429,
                 blocked_reason: Some("DDoS Flood Protection: Client IP Jailed"),
+                country_code: &geo_loc.country_code,
+                country_name: &geo_loc.country_name,
             });
 
             let retry_str = remaining_secs.to_string();
@@ -1194,6 +1223,8 @@ pub async fn proxy_handler(
         action_taken: "PASSED",
         status_code: 200,
         blocked_reason: None,
+        country_code: &geo_loc.country_code,
+        country_name: &geo_loc.country_name,
     });
 
     // 7.5 Built-in Mock Target endpoints (Simulated Demo Backend)
@@ -1270,6 +1301,8 @@ async fn handle_threat_response(
     };
 
     let incident_id = format!("SEC-{}", &chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+    let empty_headers = HeaderMap::new();
+    let geo_loc = crate::geoip::GeoResolver::resolve(client_ip, &empty_headers);
 
     state.logger.log_event(LogEntry {
         client_ip,
@@ -1284,6 +1317,8 @@ async fn handle_threat_response(
         action_taken,
         status_code,
         blocked_reason: Some(&detection.matched_pattern),
+        country_code: &geo_loc.country_code,
+        country_name: &geo_loc.country_name,
     });
 
     if current_mode == WafMode::Prevention {
@@ -1295,6 +1330,7 @@ async fn handle_threat_response(
             "rule_id": detection.rule_id,
             "severity": detection.severity,
             "client_ip": client_ip,
+            "country": geo_loc.country_code,
             "matched_trigger": detection.matched_pattern,
             "message": "Access Denied: Malicious request blocked by ROKH WAF Security Core."
         });
